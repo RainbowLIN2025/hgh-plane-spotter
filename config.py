@@ -23,7 +23,8 @@ USER_AGENT = "HGH-Plane-Spotter/0.2 (personal-hobby-tracker)"
 
 # 可选：AirLabs 免费航班时刻表 API（用于获取 HGH 计划/预计/实际起降时间）
 AIRLABS_API_KEY = os.getenv("AIRLABS_API_KEY", "").strip()
-SCHEDULE_SYNC_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_SYNC_INTERVAL_MINUTES", "240"))
+SCHEDULE_SYNC_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_SYNC_INTERVAL_MINUTES", "480"))
+SCHEDULE_MAX_PAGES = int(os.getenv("SCHEDULE_MAX_PAGES", "4"))
 
 # 可选手机推送配置（留空则不推送）
 # Bark 示例: https://api.day.app/你的Key

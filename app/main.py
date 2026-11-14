@@ -145,7 +145,7 @@ async def get_runways(limit: int = 80) -> dict[str, Any]:
 
 
 @app.get("/api/schedules")
-async def get_schedules(limit: int = 400) -> dict[str, Any]:
+async def get_schedules(limit: int = 1200) -> dict[str, Any]:
     raw_rows = db.get_hgh_schedules(limit=limit)
     grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     ordered: list[dict[str, Any]] = []

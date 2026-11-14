@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from config import BARK_URL, HGH_LAT, HGH_LON, NOTIFY_WEBHOOK_URL, RADAR_RADIUS_NM, USER_AGENT
+from config import BARK_URL, HGH_LAT, HGH_LON, NOTIFY_WEBHOOK_URL, RADAR_RADIUS_NM, SCHEDULE_MAX_PAGES, USER_AGENT
 
 logger = logging.getLogger(__name__)
 DEFAULT_HEADERS = {"User-Agent": USER_AGENT}
@@ -166,27 +166,45 @@ async def lookup_aircraft_by_reg(reg: str) -> dict[str, Any] | None:
 
 
 async def _fetch_airlabs_direction(
-    client: httpx.AsyncClient, api_key: str, query_param: str, direction: str
+    client: httpx.AsyncClient,
+    api_key: str,
+    query_param: str,
+    direction: str,
+    max_pages: int = SCHEDULE_MAX_PAGES,
 ) -> list[dict[str, Any]]:
     url = "https://airlabs.co/api/v9/schedules"
-    params = {
-        query_param: "HGH",
-        "api_key": api_key,
-        "_fields": (
-            "airline_iata,flight_iata,flight_icao,aircraft_icao,status,"
-            "dep_iata,dep_time,dep_estimated,dep_actual,"
-            "arr_iata,arr_time,arr_estimated,arr_actual"
-        ),
-    }
-    resp = await client.get(url, params=params)
-    resp.raise_for_status()
-    payload = resp.json()
-    if isinstance(payload, dict) and payload.get("error"):
-        raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
-    rows = payload.get("response") or []
-    for r in rows:
-        r["direction"] = direction
-    return rows
+    collected: list[dict[str, Any]] = []
+    offset = 0
+
+    for _ in range(max_pages):
+        params = {
+            query_param: "HGH",
+            "api_key": api_key,
+            "offset": offset,
+            "_fields": (
+                "airline_iata,flight_iata,flight_icao,aircraft_icao,status,"
+                "dep_iata,dep_time,dep_estimated,dep_actual,"
+                "arr_iata,arr_time,arr_estimated,arr_actual"
+            ),
+        }
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
+        rows = payload.get("response") or []
+        if not rows:
+            break
+        for r in rows:
+            r["direction"] = direction
+        collected.extend(rows)
+
+        has_more = (payload.get("request") or {}).get("has_more")
+        if has_more is False:
+            break
+        offset += len(rows)
+
+    return collected
 
 
 async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:

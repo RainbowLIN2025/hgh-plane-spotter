@@ -524,7 +524,7 @@ def upsert_hgh_schedules(items: list[dict[str, Any]], db_path: Path = DB_PATH) -
     return count
 
 
-def get_hgh_schedules(limit: int = 300, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+def get_hgh_schedules(limit: int = 1200, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     """查询本地缓存的 HGH 进出港时刻表，严格按时间顺序排列。"""
     with get_conn(db_path) as conn:
         rows = conn.execute(
