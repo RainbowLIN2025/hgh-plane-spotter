@@ -90,3 +90,29 @@ def classify_aircraft(
         return "窄体机", is_special
 
     return "其他", is_special
+
+
+def classify_flight_phase(
+    origin: str,
+    dest: str,
+    dist_km: float | None,
+    baro_rate: float,
+    alt_ft: int,
+) -> str:
+    """判定飞机相对 HGH 的流向状态: '进港' | '出港' | '过境'。"""
+    ori = (origin or "").strip().upper()
+    dst = (dest or "").strip().upper()
+
+    if dst in ("HGH", "ZSHC"):
+        return "进港"
+    if ori in ("HGH", "ZSHC"):
+        return "出港"
+
+    # 若呼号库未查到航线，根据 HGH 近场升降率辅助判定
+    if dist_km is not None and dist_km <= 70.0 and alt_ft < 18000:
+        if baro_rate <= -250:
+            return "进港"
+        if baro_rate >= 250:
+            return "出港"
+
+    return "过境"

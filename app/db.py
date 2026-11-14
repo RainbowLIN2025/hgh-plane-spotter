@@ -87,6 +87,24 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 last_seen_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS hgh_schedules (
+                flight_key TEXT PRIMARY KEY,
+                flight_iata TEXT DEFAULT '',
+                flight_icao TEXT DEFAULT '',
+                airline_iata TEXT DEFAULT '',
+                aircraft_icao TEXT DEFAULT '',
+                status TEXT DEFAULT '',
+                dep_iata TEXT DEFAULT '',
+                dep_time TEXT DEFAULT '',
+                dep_estimated TEXT DEFAULT '',
+                dep_actual TEXT DEFAULT '',
+                arr_iata TEXT DEFAULT 'HGH',
+                arr_time TEXT DEFAULT '',
+                arr_estimated TEXT DEFAULT '',
+                arr_actual TEXT DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS adsb_track_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hex TEXT NOT NULL,
@@ -441,3 +459,81 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
         item["confidence"] = "高" if item["freq"] >= 2 else "中/待观察"
         results.append(item)
     return results
+
+
+def upsert_hgh_schedules(items: list[dict[str, Any]], db_path: Path = DB_PATH) -> int:
+    """保存或更新 HGH 进港时刻表（计划/预计/实际起降时间）。"""
+    now = _now_iso()
+    count = 0
+    with get_conn(db_path) as conn:
+        for it in items:
+            f_iata = str(it.get("flight_iata") or "").strip().upper()
+            f_icao = str(it.get("flight_icao") or "").strip().upper()
+            arr_time = str(it.get("arr_time") or "").strip()
+            flight_key = f"{f_icao or f_iata}_{arr_time}"
+            if not (f_iata or f_icao):
+                continue
+            conn.execute(
+                """
+                INSERT INTO hgh_schedules (
+                    flight_key, flight_iata, flight_icao, airline_iata, aircraft_icao, status,
+                    dep_iata, dep_time, dep_estimated, dep_actual,
+                    arr_iata, arr_time, arr_estimated, arr_actual, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(flight_key) DO UPDATE SET
+                    status=excluded.status,
+                    aircraft_icao=COALESCE(NULLIF(excluded.aircraft_icao, ''), hgh_schedules.aircraft_icao),
+                    dep_estimated=excluded.dep_estimated,
+                    dep_actual=excluded.dep_actual,
+                    arr_estimated=excluded.arr_estimated,
+                    arr_actual=excluded.arr_actual,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    flight_key,
+                    f_iata,
+                    f_icao,
+                    str(it.get("airline_iata") or "").upper(),
+                    str(it.get("aircraft_icao") or "").upper(),
+                    str(it.get("status") or "").lower(),
+                    str(it.get("dep_iata") or "").upper(),
+                    str(it.get("dep_time") or ""),
+                    str(it.get("dep_estimated") or ""),
+                    str(it.get("dep_actual") or ""),
+                    str(it.get("arr_iata") or "HGH").upper(),
+                    arr_time,
+                    str(it.get("arr_estimated") or ""),
+                    str(it.get("arr_actual") or ""),
+                    now,
+                ),
+            )
+            count += 1
+    return count
+
+
+def get_hgh_schedules(limit: int = 200, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """查询本地缓存的 HGH 进港时刻表，按预计/计划落地时间排序。"""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM hgh_schedules
+            ORDER BY COALESCE(NULLIF(arr_estimated, ''), arr_time) ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_schedule_map_by_icao(db_path: Path = DB_PATH) -> dict[str, dict[str, Any]]:
+    """返回 {flight_icao: schedule_row} 映射，用于在实时雷达上匹配计划/实际时间。"""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM hgh_schedules WHERE flight_icao != '' ORDER BY updated_at DESC"
+        ).fetchall()
+    mapping: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        code = r["flight_icao"].upper()
+        if code not in mapping:
+            mapping[code] = dict(r)
+    return mapping

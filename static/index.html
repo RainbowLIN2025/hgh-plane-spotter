@@ -199,6 +199,13 @@
         <button class="chip" onclick="setLiveryFilter('仅彩绘', this)">仅彩绘</button>
         <button class="chip" onclick="setLiveryFilter('非彩绘', this)">非彩绘</button>
       </div>
+      <div class="filter-row">
+        <span class="filter-label">进出港:</span>
+        <button class="chip active" onclick="setPhaseFilter('全部', this)">全部</button>
+        <button class="chip" onclick="setPhaseFilter('进港', this)">进港</button>
+        <button class="chip" onclick="setPhaseFilter('出港', this)">出港</button>
+        <button class="chip" onclick="setPhaseFilter('过境', this)">过境</button>
+      </div>
     </div>
 
     <!-- Tab 1: 实时雷达 -->
@@ -226,7 +233,16 @@
       <div id="runwayLogs"></div>
     </section>
 
-    <!-- Tab 4: 关注清单管理 -->
+    <!-- Tab 4: HGH 今日进港时刻表 -->
+    <section id="tab-sched" class="hidden">
+      <div class="section-title">
+        <span>HGH 进港时刻表（计划 / 预计 / 实际）</span>
+        <button class="btn-ghost" onclick="refreshSchedules()">手动同步</button>
+      </div>
+      <div id="schedList"></div>
+    </section>
+
+    <!-- Tab 5: 关注清单管理 -->
     <section id="tab-watch" class="hidden">
       <div class="card">
         <div class="title" style="margin-bottom:8px;">添加彩绘机 / 货机</div>
@@ -248,8 +264,9 @@
     </section>
   </main>
 
-  <nav>
+  <nav style="grid-template-columns: repeat(5, 1fr);">
     <button class="active" onclick="switchTab('radar', this)">实时雷达</button>
+    <button onclick="switchTab('sched', this)">今日进港</button>
     <button onclick="switchTab('pred', this)">航线预测</button>
     <button onclick="switchTab('runway', this)">跑道记录</button>
     <button onclick="switchTab('watch', this)">关注清单</button>
@@ -259,7 +276,9 @@
     let currentTab = 'radar';
     let filterBody = '全部';
     let filterLivery = '全部';
+    let filterPhase = '全部';
     let cachedRadar = null;
+    let cachedSched = null;
     let cachedPreds = null;
     let cachedRunways = null;
 
@@ -268,6 +287,7 @@
       const isSpecial = Boolean(item.is_special_livery);
       if (filterLivery === '仅彩绘' && !isSpecial) return false;
       if (filterLivery === '非彩绘' && isSpecial) return false;
+      if (currentTab === 'radar' && filterPhase !== '全部' && (item.flight_phase || '过境') !== filterPhase) return false;
       return true;
     }
 
@@ -285,8 +305,16 @@
       rerenderActiveTab();
     }
 
+    function setPhaseFilter(val, el) {
+      filterPhase = val;
+      el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      rerenderActiveTab();
+    }
+
     function rerenderActiveTab() {
       if (currentTab === 'radar' && cachedRadar) renderRadar(cachedRadar);
+      if (currentTab === 'sched' && cachedSched) renderSchedules(cachedSched);
       if (currentTab === 'pred' && cachedPreds) renderPredictions(cachedPreds);
       if (currentTab === 'runway' && cachedRunways) renderRunways(cachedRunways);
     }
@@ -299,6 +327,7 @@
       document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
       el.classList.add('active');
       if (tab === 'radar') loadRadar();
+      if (tab === 'sched') loadSchedules();
       if (tab === 'pred') loadPredictions();
       if (tab === 'runway') loadRunways();
       if (tab === 'watch') loadWatchlist();
@@ -322,18 +351,24 @@
         ? `https://www.flightradar24.com/data/aircraft/${ac.reg.toLowerCase()}`
         : `https://www.flightradar24.com/${ac.callsign || ''}`;
       const liveryBadge = ac.is_special_livery ? `<span class="badge hot">彩绘</span>` : '';
+      const phaseBadgeClass = ac.flight_phase === '进港' ? 'ok' : (ac.flight_phase === '出港' ? 'warn' : '');
+      const phaseBadge = `<span class="badge ${phaseBadgeClass}">${ac.flight_phase || '过境'}</span>`;
       const bodyBadgeClass = ac.body_type === '货机' ? 'warn' : (ac.body_type === '宽体机' ? 'ok' : '');
       const bodyBadge = `<span class="badge ${bodyBadgeClass}">${ac.body_type || '其他'}</span>`;
+
+      const schedLine = (ac.arr_sched || ac.arr_est || ac.arr_actual)
+        ? `<br/>时刻表: 计划 ${ac.arr_sched || '-'} · 预计 ${ac.arr_est || '-'} · 实际 ${ac.arr_actual || '-'}`
+        : '';
 
       return `
         <div class="card ${ac.is_special_livery || ac.is_watched ? 'watched' : ''}">
           <div class="row">
             <div class="title">${ac.livery_name || regOrCallsign}</div>
-            <div class="badges">${liveryBadge}${bodyBadge}</div>
+            <div class="badges">${liveryBadge}${phaseBadge}${bodyBadge}</div>
           </div>
           <div class="sub">
             注册号: <b>${ac.reg || '-'}</b> · 机型: ${ac.model || '-'} · 呼号: ${ac.callsign || '-'}<br/>
-            航线: <b>${route}</b> ${eta ? `· <span style="color:var(--ok)">${eta}</span>` : ''}<br/>
+            航线: <b>${route}</b> ${eta ? `· <span style="color:var(--ok)">${eta}</span>` : ''}${schedLine}<br/>
             距 HGH: <b>${ac.dist_hgh_km ?? '-'} km</b> · 高度: ${alt} (${trend}) · 航向: ${ac.track_deg ?? '-'}°
           </div>
           ${img}
@@ -352,7 +387,7 @@
         ? `异常: ${data.last_error}`
         : `更新于 ${data.last_updated || '尚未完成首次轮询'}${srcInfo}`;
 
-      const watchedRemote = (data.watchlist_live || []).filter(x => (x.dist_hgh_km ?? 9999) > 160);
+      const watchedRemote = (data.watchlist_live || []).filter(x => (x.dist_hgh_km ?? 9999) > 470);
       const merged = [...(data.hgh_nearby || []), ...watchedRemote];
       const filtered = merged.filter(matchDualFilter);
       document.getElementById('radarCount').textContent = `${filtered.length} / ${merged.length} 架`;
@@ -388,6 +423,53 @@
           </div>
         `).join('')
         : '<div class="card sub">暂无符合当前筛选条件的历史规律记录。</div>';
+    }
+
+    function renderSchedules(data) {
+      if (!data.configured) {
+        document.getElementById('schedList').innerHTML = `
+          <div class="card sub">
+            <b>尚未配置 AirLabs 免费 API Key</b><br/><br/>
+            1. 前往 <b>airlabs.co</b> 注册免费账号并复制 API Key。<br/>
+            2. 在终端运行：<br/>
+            <code>export AIRLABS_API_KEY="你的Key"</code><br/>
+            <code>cd ~/Desktop/hgh-plane-spotter && ./scripts/install_launchd.sh</code><br/><br/>
+            配置后即可在此查看 HGH 当日所有进港航班的<b>计划 / 预计 / 实际起降时间</b>。
+          </div>`;
+        return;
+      }
+      const rows = (data.rows || []).filter(matchDualFilter);
+      document.getElementById('schedList').innerHTML = rows.length
+        ? rows.map(s => `
+          <div class="card">
+            <div class="row">
+              <div class="title">${s.flight_iata || s.flight_icao} (${s.dep_iata || '?'} → HGH)</div>
+              <div class="badges">
+                <span class="badge">${s.body_type || '其他'}</span>
+                <span class="badge ${s.status === 'active' ? 'ok' : ''}">${s.status || '-'}</span>
+              </div>
+            </div>
+            <div class="sub">
+              机型: <b>${s.aircraft_icao || '-'}</b> · 呼号: ${s.flight_icao || '-'}<br/>
+              起飞: 计划 ${s.dep_time || '-'} · 预计 ${s.dep_estimated || '-'} · 实际 ${s.dep_actual || '-'}<br/>
+              落地: 计划 ${s.arr_time || '-'} · 预计 <b>${s.arr_estimated || '-'}</b> · 实际 <b>${s.arr_actual || '-'}</b>
+            </div>
+          </div>
+        `).join('')
+        : '<div class="card sub">暂无符合条件的进港时刻表记录，可点击右上角“手动同步”。</div>';
+    }
+
+    async function loadSchedules() {
+      const res = await fetch('/api/schedules');
+      cachedSched = await res.json();
+      renderSchedules(cachedSched);
+    }
+
+    async function refreshSchedules() {
+      const res = await fetch('/api/schedules/refresh', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) return alert(data.detail || '同步失败');
+      await loadSchedules();
     }
 
     async function loadPredictions() {

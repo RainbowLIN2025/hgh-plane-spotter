@@ -32,6 +32,13 @@ cat > "${PLIST_PATH}" <<EOF
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJECT_DIR}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIRLABS_API_KEY</key>
+        <string>${AIRLABS_API_KEY:-}</string>
+        <key>BARK_URL</key>
+        <string>${BARK_URL:-}</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

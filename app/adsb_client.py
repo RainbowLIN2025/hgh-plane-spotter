@@ -155,6 +155,30 @@ async def lookup_aircraft_by_reg(reg: str) -> dict[str, Any] | None:
         return None
 
 
+async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:
+    """通过 AirLabs Schedules API 拉取 HGH 进港排班（计划/预计/实际起降时间）。"""
+    key = api_key.strip()
+    if not key:
+        return []
+    url = "https://airlabs.co/api/v9/schedules"
+    params = {
+        "arr_iata": "HGH",
+        "api_key": key,
+        "_fields": (
+            "airline_iata,flight_iata,flight_icao,aircraft_icao,status,"
+            "dep_iata,dep_time,dep_estimated,dep_actual,"
+            "arr_iata,arr_time,arr_estimated,arr_actual"
+        ),
+    }
+    async with httpx.AsyncClient(timeout=15.0, headers=DEFAULT_HEADERS) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
+        return payload.get("response") or []
+
+
 async def send_phone_alert(title: str, body: str) -> None:
     """向手机发送 Bark 或通用 Webhook 提醒。"""
     if not BARK_URL and not NOTIFY_WEBHOOK_URL:

@@ -41,6 +41,14 @@ def test_classifier_wide_narrow_cargo_and_livery() -> None:
     assert classifier.classify_aircraft("B748", "CSS123", {"category": "彩绘货机"}) == ("货机", True)
 
 
+def test_classify_flight_phase() -> None:
+    assert classifier.classify_flight_phase("PEK", "HGH", 150.0, 0, 20000) == "进港"
+    assert classifier.classify_flight_phase("HGH", "CAN", 40.0, 1500, 5000) == "出港"
+    assert classifier.classify_flight_phase("", "", 30.0, -800, 3000) == "进港"
+    assert classifier.classify_flight_phase("", "", 30.0, 1200, 4000) == "出港"
+    assert classifier.classify_flight_phase("PVG", "CAN", 120.0, 0, 32000) == "过境"
+
+
 def test_merge_adsb_records_prefers_freshest() -> None:
     b1 = [{"hex": "7809e4", "lat": 30.1, "lon": 120.2, "seen": 5.0, "r": "B-2021"}]
     b2 = [{"hex": "7809E4", "lat": 30.2, "lon": 120.3, "seen": 0.4, "t": "B77W"}]

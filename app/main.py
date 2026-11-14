@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import adsb_client, db, tracker
-from config import BASE_DIR, HGH_IATA, HGH_ICAO, HGH_LAT, HGH_LON, POLL_INTERVAL_SECONDS, RADAR_RADIUS_NM
+from app import adsb_client, classifier, db, tracker
+from config import AIRLABS_API_KEY, BASE_DIR, HGH_IATA, HGH_ICAO, HGH_LAT, HGH_LON, POLL_INTERVAL_SECONDS, RADAR_RADIUS_NM
 
 STATIC_DIR = BASE_DIR / "static"
 
@@ -64,13 +64,15 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/api/radar")
-async def get_radar(body_type: str = "", livery: str = "") -> dict[str, Any]:
+async def get_radar(body_type: str = "", livery: str = "", phase: str = "") -> dict[str, Any]:
     def _match(item: dict[str, Any]) -> bool:
         if body_type and body_type != "全部" and item.get("body_type") != body_type:
             return False
         if livery == "仅彩绘" and not item.get("is_special_livery"):
             return False
         if livery == "非彩绘" and item.get("is_special_livery"):
+            return False
+        if phase and phase != "全部" and item.get("flight_phase") != phase:
             return False
         return True
 
@@ -137,5 +139,31 @@ async def get_predictions(days: int = 14) -> list[dict[str, Any]]:
 
 
 @app.get("/api/runways")
-async def get_runways(limit: int = 50) -> dict[str, Any]:
+async def get_runways(limit: int = 80) -> dict[str, Any]:
     return db.get_runway_history(limit=limit)
+
+
+@app.get("/api/schedules")
+async def get_schedules(limit: int = 200) -> dict[str, Any]:
+    rows = db.get_hgh_schedules(limit=limit)
+    for r in rows:
+        body_type, is_special = classifier.classify_aircraft(
+            r.get("aircraft_icao", ""), r.get("flight_icao", ""), None
+        )
+        r["body_type"] = body_type
+        r["is_special_livery"] = is_special
+    return {
+        "configured": bool(AIRLABS_API_KEY),
+        "last_sync": tracker.state.last_schedule_sync.isoformat(timespec="seconds")
+        if tracker.state.last_schedule_sync
+        else "",
+        "rows": rows,
+    }
+
+
+@app.post("/api/schedules/refresh")
+async def refresh_schedules() -> dict[str, Any]:
+    if not AIRLABS_API_KEY:
+        raise HTTPException(status_code=400, detail="未配置 AIRLABS_API_KEY 环境变量")
+    cnt = await tracker.sync_schedules_once()
+    return {"ok": True, "count": cnt}

@@ -8,7 +8,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app import adsb_client, classifier, db, geo
-from config import HGH_LAT, HGH_LON, POLL_INTERVAL_SECONDS
+from config import (
+    AIRLABS_API_KEY,
+    HGH_LAT,
+    HGH_LON,
+    POLL_INTERVAL_SECONDS,
+    RADAR_RADIUS_NM,
+    SCHEDULE_SYNC_INTERVAL_MINUTES,
+)
 
 logger = logging.getLogger(__name__)
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -26,6 +33,7 @@ class SpotterState:
         # 呼号航线缓存: {callsign: (origin, dest, cached_at)}
         self.route_cache: dict[str, tuple[str, str, datetime]] = {}
         self.alerted_recent: dict[str, datetime] = {}
+        self.last_schedule_sync: datetime | None = None
         self.last_error: str = ""
 
 
@@ -82,12 +90,13 @@ def _enrich_aircraft(
         if (lat is not None and lon is not None)
         else None
     )
+    flight_phase = classifier.classify_flight_phase(origin, dest, dist_km, float(baro_rate), alt_ft)
     eta_min = (
         geo.estimate_eta_minutes(lat, lon, gs)
         if (
             lat is not None
             and lon is not None
-            and (dest in ("HGH", "ZSHC", "") or (dist_km is not None and dist_km < 250))
+            and flight_phase == "进港"
         )
         else None
     )
@@ -101,6 +110,7 @@ def _enrich_aircraft(
         "category": (watch_item or {}).get("category") or body_type,
         "body_type": body_type,
         "is_special_livery": is_special_livery,
+        "flight_phase": flight_phase,
         "livery_name": (watch_item or {}).get("livery_name") or "",
         "img_url": (watch_item or {}).get("img_url") or "",
         "is_watched": watch_item is not None,
@@ -117,9 +127,30 @@ def _enrich_aircraft(
     }
 
 
+async def sync_schedules_once() -> int:
+    """拉取 HGH 进港时刻表并写入本地数据库。"""
+    if not AIRLABS_API_KEY:
+        return 0
+    items = await adsb_client.fetch_hgh_arrivals_schedule(AIRLABS_API_KEY)
+    cnt = db.upsert_hgh_schedules(items)
+    state.last_schedule_sync = datetime.now(CHINA_TZ)
+    return cnt
+
+
 async def run_once() -> None:
     """执行单轮多源雷达拉取、全量飞机记录、航线匹配与跑道判定。"""
+    now_dt = datetime.now(CHINA_TZ)
+    if AIRLABS_API_KEY and (
+        state.last_schedule_sync is None
+        or (now_dt - state.last_schedule_sync) >= timedelta(minutes=SCHEDULE_SYNC_INTERVAL_MINUTES)
+    ):
+        try:
+            await sync_schedules_once()
+        except Exception as exc:
+            logger.warning("同步 HGH 时刻表失败: %s", exc)
+
     watchlist = db.get_active_watchlist()
+    schedule_map = db.get_schedule_map_by_icao()
     (nearby_raw, ok_sources, total_sources), watch_raw = await asyncio.gather(
         adsb_client.fetch_hgh_nearby_multi_source(),
         adsb_client.fetch_aircraft_by_hexes(list(watchlist.keys())),
@@ -146,6 +177,16 @@ async def run_once() -> None:
         origin, dest = routes_by_cs.get(callsign, ("", ""))
 
         enriched = _enrich_aircraft(ac, watch_item, origin, dest)
+        sched = schedule_map.get(callsign)
+        if sched:
+            enriched["dep_time"] = sched.get("dep_actual") or sched.get("dep_estimated") or sched.get("dep_time") or ""
+            enriched["arr_sched"] = sched.get("arr_time") or ""
+            enriched["arr_est"] = sched.get("arr_estimated") or ""
+            enriched["arr_actual"] = sched.get("arr_actual") or ""
+            if not enriched["origin"] and sched.get("dep_iata"):
+                enriched["origin"] = sched["dep_iata"]
+            if not enriched["dest"] and sched.get("arr_iata"):
+                enriched["dest"] = sched["arr_iata"]
         dist_km = enriched["dist_hgh_km"]
         lat = enriched["lat"]
         lon = enriched["lon"]
@@ -166,7 +207,8 @@ async def run_once() -> None:
         if callsign and (origin or dest):
             db.record_flight(hx, callsign, origin, dest, source="hexdb_callsign")
 
-        if dist_km is not None and dist_km <= 160:
+        max_dist_km = RADAR_RADIUS_NM * 1.852 + 10.0
+        if dist_km is not None and dist_km <= max_dist_km:
             nearby_enriched.append(enriched)
 
         if watch_item is not None:
