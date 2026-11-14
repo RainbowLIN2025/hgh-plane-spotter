@@ -190,6 +190,12 @@
     .time-grid .tg-val { font-size: 14px; font-weight: 600; color: var(--text); }
     .time-grid .tg-val.actual { color: var(--ok); }
     .time-grid .tg-val.est { color: var(--accent); }
+    .time-grid .tg-val.selected {
+      background: rgba(56, 189, 248, 0.16);
+      border-radius: 6px;
+      padding: 2px 6px;
+      outline: 1px solid var(--accent);
+    }
     .metar-bar {
       background: #101a2e;
       border: 1px solid var(--border);
@@ -280,9 +286,28 @@
 
     <!-- Tab 4: HGH 今日进出港时刻表 -->
     <section id="tab-sched" class="hidden">
+      <div class="filter-bar" style="margin-bottom:8px;">
+        <div class="filter-row">
+          <span class="filter-label">口径:</span>
+          <button class="chip active" onclick="setSchedTimeType('计划', this)">计划</button>
+          <button class="chip" onclick="setSchedTimeType('预计', this)">预计</button>
+          <button class="chip" onclick="setSchedTimeType('实际', this)">实际</button>
+        </div>
+        <div class="filter-row" style="justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="filter-label">起降:</span>
+            <button class="chip" onclick="setSchedLeg('起飞', this)">起飞</button>
+            <button class="chip active" onclick="setSchedLeg('落地', this)">落地</button>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn-ghost" id="schedSortBtn" onclick="toggleSchedSort()">时间 ↑</button>
+            <button class="btn-ghost" onclick="refreshSchedules()">同步</button>
+          </div>
+        </div>
+      </div>
       <div class="section-title">
-        <span>HGH 今日进出港时刻表（按时间顺序）</span>
-        <button class="btn-ghost" onclick="refreshSchedules()">手动同步</button>
+        <span id="schedTitle">按「计划落地」排序</span>
+        <span id="schedCount">0 班</span>
       </div>
       <div id="schedList"></div>
     </section>
@@ -326,6 +351,9 @@
     let cachedSched = null;
     let cachedPreds = null;
     let cachedRunways = null;
+    let schedTimeType = '计划';
+    let schedLeg = '落地';
+    let schedSortAsc = true;
     let mapOpen = false;
     let leafletMap = null;
     let aircraftLayer = null;
@@ -526,6 +554,32 @@
         : '<div class="card sub">暂无符合当前筛选条件的历史规律记录。</div>';
     }
 
+    function setSchedTimeType(val, el) {
+      schedTimeType = val;
+      el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      if (cachedSched) renderSchedules(cachedSched);
+    }
+
+    function setSchedLeg(val, el) {
+      schedLeg = val;
+      el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      if (cachedSched) renderSchedules(cachedSched);
+    }
+
+    function toggleSchedSort() {
+      schedSortAsc = !schedSortAsc;
+      document.getElementById('schedSortBtn').textContent = schedSortAsc ? '时间 ↑' : '时间 ↓';
+      if (cachedSched) renderSchedules(cachedSched);
+    }
+
+    function getSelectedSchedField() {
+      const prefix = schedLeg === '起飞' ? 'dep_' : 'arr_';
+      const suffix = schedTimeType === '计划' ? 'time' : (schedTimeType === '预计' ? 'estimated' : 'actual');
+      return prefix + suffix;
+    }
+
     function fmtHM(ts) {
       if (!ts) return '--:--';
       const parts = String(ts).trim().split(' ');
@@ -545,7 +599,19 @@
           </div>`;
         return;
       }
-      const rows = (data.rows || []).filter(matchDualFilter);
+      const field = getSelectedSchedField();
+      document.getElementById('schedTitle').textContent = `按「${schedTimeType}${schedLeg}」${schedSortAsc ? '升序' : '降序'}排列`;
+
+      const rows = (data.rows || []).filter(matchDualFilter).slice().sort((a, b) => {
+        const va = a[field] || '';
+        const vb = b[field] || '';
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+        return schedSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+
+      document.getElementById('schedCount').textContent = `${rows.length} 班`;
       document.getElementById('schedList').innerHTML = rows.length
         ? rows.map(s => {
           const dir = s.direction || s.flight_phase || '进港';
@@ -553,6 +619,7 @@
           const csTxt = (s.codeshares && s.codeshares.length)
             ? ` · 共享: ${s.codeshares.join('/')}`
             : '';
+          const sel = (f) => (f === field ? 'selected' : '');
           return `
           <div class="card">
             <div class="row">
@@ -571,18 +638,18 @@
               <div class="tg-head">实际</div>
 
               <div class="tg-head">起飞</div>
-              <div class="tg-val">${fmtHM(s.dep_time)}</div>
-              <div class="tg-val est">${fmtHM(s.dep_estimated)}</div>
-              <div class="tg-val actual">${fmtHM(s.dep_actual)}</div>
+              <div class="tg-val ${sel('dep_time')}">${fmtHM(s.dep_time)}</div>
+              <div class="tg-val est ${sel('dep_estimated')}">${fmtHM(s.dep_estimated)}</div>
+              <div class="tg-val actual ${sel('dep_actual')}">${fmtHM(s.dep_actual)}</div>
 
               <div class="tg-head">落地</div>
-              <div class="tg-val">${fmtHM(s.arr_time)}</div>
-              <div class="tg-val est">${fmtHM(s.arr_estimated)}</div>
-              <div class="tg-val actual">${fmtHM(s.arr_actual)}</div>
+              <div class="tg-val ${sel('arr_time')}">${fmtHM(s.arr_time)}</div>
+              <div class="tg-val est ${sel('arr_estimated')}">${fmtHM(s.arr_estimated)}</div>
+              <div class="tg-val actual ${sel('arr_actual')}">${fmtHM(s.arr_actual)}</div>
             </div>
           </div>`;
         }).join('')
-        : '<div class="card sub">暂无符合条件的进出港时刻表记录，可点击右上角“手动同步”。</div>';
+        : '<div class="card sub">暂无符合条件的进出港时刻表记录，可点击右上角“同步”。</div>';
     }
 
     async function loadSchedules() {
