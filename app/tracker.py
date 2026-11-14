@@ -168,6 +168,84 @@ async def sync_metar_once() -> None:
     state.last_metar_sync = datetime.now(CHINA_TZ)
 
 
+async def supplement_with_airlabs() -> int:
+    """手动触发 AirLabs 实时补盲：合并进当前雷达列表并落库（每次仅消耗 1 次额度）。"""
+    if not AIRLABS_API_KEY:
+        return 0
+    rows = await adsb_client.fetch_hgh_airlabs_live(AIRLABS_API_KEY)
+    watchlist = db.get_active_watchlist()
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in state.hgh_nearby:
+        k = item.get("hex") or item.get("reg") or item.get("callsign")
+        if k:
+            by_key[k] = item
+
+    added_or_updated = 0
+    for r in rows:
+        hx = str(r.get("hex") or "").strip().lower()
+        reg = str(r.get("reg_number") or "").strip().upper()
+        callsign = str(r.get("flight_icao") or r.get("flight_iata") or "").strip().upper()
+        model = str(r.get("aircraft_icao") or "").strip().upper()
+        origin = str(r.get("dep_iata") or "").strip().upper()
+        dest = str(r.get("arr_iata") or "").strip().upper()
+        lat = r.get("lat")
+        lon = r.get("lng")
+        alt_m = r.get("alt")
+        alt_ft = int(float(alt_m) * 3.28084) if isinstance(alt_m, (int, float)) else 99999
+        speed_kmh = r.get("speed")
+        gs_knots = round(float(speed_kmh) / 1.852, 1) if isinstance(speed_kmh, (int, float)) else None
+        track_deg = r.get("dir")
+        v_ms = r.get("v_speed")
+        baro_rate = round(float(v_ms) * 196.85) if isinstance(v_ms, (int, float)) else 0
+
+        watch_item = watchlist.get(hx) if hx else None
+        body_type, is_special = classifier.classify_aircraft(model, callsign, watch_item)
+        dist_km = round(geo.haversine_km(lat, lon, HGH_LAT, HGH_LON), 1) if (lat is not None and lon is not None) else None
+        flight_phase = classifier.classify_flight_phase(origin, dest, dist_km, float(baro_rate), alt_ft)
+        eta_min = geo.estimate_eta_minutes(lat, lon, gs_knots) if (lat is not None and lon is not None and flight_phase == "进港") else None
+
+        enriched = {
+            "hex": hx or reg.lower() or callsign.lower(),
+            "reg": (watch_item or {}).get("reg") or reg,
+            "callsign": callsign,
+            "model": (watch_item or {}).get("model") or model,
+            "airline": (watch_item or {}).get("airline") or str(r.get("airline_iata") or ""),
+            "category": (watch_item or {}).get("category") or body_type,
+            "body_type": body_type,
+            "is_special_livery": is_special,
+            "flight_phase": flight_phase,
+            "livery_name": (watch_item or {}).get("livery_name") or "",
+            "img_url": (watch_item or {}).get("img_url") or "",
+            "is_watched": watch_item is not None,
+            "from_airlabs": True,
+            "lat": lat,
+            "lon": lon,
+            "alt_ft": alt_ft,
+            "gs_knots": gs_knots,
+            "track_deg": round(float(track_deg), 1) if isinstance(track_deg, (int, float)) else None,
+            "baro_rate": baro_rate,
+            "dist_hgh_km": dist_km,
+            "eta_hgh_min": eta_min,
+            "origin": origin,
+            "dest": dest,
+        }
+
+        key = enriched["hex"]
+        by_key[key] = enriched
+        added_or_updated += 1
+
+        if hx:
+            db.upsert_observed_aircraft(hx, enriched["reg"], enriched["model"], callsign, body_type, is_special)
+            if callsign and (origin or dest):
+                db.record_flight(hx, callsign, origin, dest, source="airlabs_live")
+
+    merged = list(by_key.values())
+    merged.sort(key=lambda x: (not x["is_special_livery"], not x["is_watched"], x["dist_hgh_km"] or 9999))
+    state.hgh_nearby = merged
+    state.last_updated = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return added_or_updated
+
+
 async def run_once() -> None:
     """执行单轮多源雷达拉取、全量飞机记录、航线匹配与跑道判定。"""
     now_dt = datetime.now(CHINA_TZ)

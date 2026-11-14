@@ -260,6 +260,7 @@
       <div class="section-title">
         <span>HGH 周边全量观测（彩绘与关注置顶）</span>
         <span>
+          <button class="btn-ghost" onclick="airlabsBlindFill()">AirLabs补盲</button>
           <button class="btn-ghost" onclick="toggleMap()" id="mapToggleBtn">展开地图</button>
           <span id="radarCount" style="margin-left:6px;">0 架</span>
         </span>
@@ -463,6 +464,15 @@
       renderRadar(cachedRadar);
     }
 
+    async function airlabsBlindFill() {
+      document.getElementById('statusText').textContent = '正在调用 AirLabs 补盲（耗 1 次额度）...';
+      const res = await fetch('/api/radar/airlabs', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) return alert(data.detail || 'AirLabs 补盲失败');
+      cachedRadar = data;
+      renderRadar(cachedRadar);
+    }
+
     function renderAircraftCard(ac) {
       const route = (ac.origin || ac.dest) ? `${ac.origin || '?'} → ${ac.dest || '?'}` : '航线未知';
       const eta = ac.eta_hgh_min ? `预计 ${ac.eta_hgh_min} 分钟后到 HGH` : '';
@@ -474,6 +484,7 @@
         ? `https://www.flightradar24.com/data/aircraft/${ac.reg.toLowerCase()}`
         : `https://www.flightradar24.com/${ac.callsign || ''}`;
       const liveryBadge = ac.is_special_livery ? `<span class="badge hot">彩绘</span>` : '';
+      const airlabsBadge = ac.from_airlabs ? `<span class="badge">补盲</span>` : '';
       const phaseBadgeClass = ac.flight_phase === '进港' ? 'ok' : (ac.flight_phase === '出港' ? 'warn' : '');
       const phaseBadge = `<span class="badge ${phaseBadgeClass}">${ac.flight_phase || '过境'}</span>`;
       const bodyBadgeClass = ac.body_type === '货机' ? 'warn' : (ac.body_type === '宽体机' ? 'ok' : '');
@@ -487,7 +498,7 @@
         <div class="card ${ac.is_special_livery || ac.is_watched ? 'watched' : ''}">
           <div class="row">
             <div class="title">${ac.livery_name || regOrCallsign}</div>
-            <div class="badges">${liveryBadge}${phaseBadge}${bodyBadge}</div>
+            <div class="badges">${liveryBadge}${airlabsBadge}${phaseBadge}${bodyBadge}</div>
           </div>
           <div class="sub">
             注册号: <b>${ac.reg || '-'}</b> · 机型: ${ac.model || '-'} · 呼号: ${ac.callsign || '-'}<br/>

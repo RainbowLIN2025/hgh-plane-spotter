@@ -94,6 +94,16 @@ async def refresh_radar() -> dict[str, Any]:
     return await get_radar()
 
 
+@app.post("/api/radar/airlabs")
+async def airlabs_supplement() -> dict[str, Any]:
+    if not AIRLABS_API_KEY:
+        raise HTTPException(status_code=400, detail="未配置 AIRLABS_API_KEY 环境变量")
+    cnt = await tracker.supplement_with_airlabs()
+    data = await get_radar()
+    data["airlabs_added"] = cnt
+    return data
+
+
 @app.get("/api/watchlist")
 async def list_watchlist() -> list[dict[str, Any]]:
     return list(db.get_active_watchlist().values())

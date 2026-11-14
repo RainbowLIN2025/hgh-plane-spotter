@@ -220,6 +220,25 @@ async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:
     return arr_rows + dep_rows
 
 
+async def fetch_hgh_airlabs_live(api_key: str) -> list[dict[str, Any]]:
+    """通过 AirLabs /flights bbox 一次性拉取 HGH 周边实时飞机（仅耗 1 次额度）。"""
+    key = api_key.strip()
+    if not key:
+        return []
+    url = "https://airlabs.co/api/v9/flights"
+    params = {
+        "bbox": "28.5,118.5,32.0,122.5",
+        "api_key": key,
+    }
+    async with httpx.AsyncClient(timeout=12.0, headers=DEFAULT_HEADERS) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
+        return payload.get("response") or []
+
+
 async def fetch_hgh_metar() -> dict[str, Any] | None:
     """从 AviationWeather 获取 ZSHC (HGH) 实时 METAR 风向与能见度。"""
     url = "https://aviationweather.gov/api/data/metar?ids=ZSHC&format=json"
