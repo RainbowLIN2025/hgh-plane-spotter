@@ -11,11 +11,18 @@
 
 ## 本地运行（macOS + Tailscale 方案）
 
-### 1. 一键启动服务
+### 1. 启动与关闭（macOS 后台自启 `launchd` 方案，最省资源）
+安装并开启后台常驻（关掉终端也能一直运行，开机自动启动）：
 ```bash
-chmod +x start.sh
-./start.sh
+cd ~/Desktop/hgh-plane-spotter
+./scripts/install_launchd.sh
 ```
+彻底停止并关闭后台服务（同时取消开机自启）：
+```bash
+cd ~/Desktop/hgh-plane-spotter
+./scripts/uninstall_launchd.sh
+```
+如果只是临时在前台调试运行，也可以直接执行 `./start.sh`。
 启动后本机浏览器访问：`http://127.0.0.1:8787`（如需自定义端口可先执行 `export PORT=你的端口`）
 
 ### 2. 出门只带手机如何访问？（Tailscale）
