@@ -53,6 +53,7 @@ EOF
 
 # 若之前已加载，先卸载再重新加载
 launchctl bootout "gui/$(id -u)/${PLIST_LABEL}" 2>/dev/null || true
+sleep 1
 launchctl bootstrap "gui/$(id -u)" "${PLIST_PATH}"
 
 echo "=================================================="
