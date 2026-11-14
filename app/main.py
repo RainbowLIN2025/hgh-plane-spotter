@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import adsb_client, db, tracker
-from config import BASE_DIR, HGH_IATA, HGH_ICAO, HGH_LAT, HGH_LON, RADAR_RADIUS_NM
+from config import BASE_DIR, HGH_IATA, HGH_ICAO, HGH_LAT, HGH_LON, POLL_INTERVAL_SECONDS, RADAR_RADIUS_NM
 
 STATIC_DIR = BASE_DIR / "static"
 
@@ -55,18 +55,33 @@ async def health() -> dict[str, Any]:
         "airport": f"{HGH_IATA} / {HGH_ICAO}",
         "center": {"lat": HGH_LAT, "lon": HGH_LON},
         "radius_nm": RADAR_RADIUS_NM,
+        "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+        "sources_ok": tracker.state.sources_ok,
+        "sources_total": tracker.state.sources_total,
         "last_updated": tracker.state.last_updated,
         "last_error": tracker.state.last_error,
     }
 
 
 @app.get("/api/radar")
-async def get_radar() -> dict[str, Any]:
+async def get_radar(body_type: str = "", livery: str = "") -> dict[str, Any]:
+    def _match(item: dict[str, Any]) -> bool:
+        if body_type and body_type != "全部" and item.get("body_type") != body_type:
+            return False
+        if livery == "仅彩绘" and not item.get("is_special_livery"):
+            return False
+        if livery == "非彩绘" and item.get("is_special_livery"):
+            return False
+        return True
+
     return {
         "last_updated": tracker.state.last_updated,
         "last_error": tracker.state.last_error,
-        "watchlist_live": tracker.state.watchlist_live,
-        "hgh_nearby": tracker.state.hgh_nearby,
+        "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+        "sources_ok": tracker.state.sources_ok,
+        "sources_total": tracker.state.sources_total,
+        "watchlist_live": [x for x in tracker.state.watchlist_live if _match(x)],
+        "hgh_nearby": [x for x in tracker.state.hgh_nearby if _match(x)],
     }
 
 

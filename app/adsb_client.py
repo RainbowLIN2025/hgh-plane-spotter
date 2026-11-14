@@ -1,25 +1,83 @@
-"""异步 ADS-B、HexDB 与手机推送客户端。"""
+"""多数据源并发 ADS-B、HexDB 与手机推送客户端。"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import httpx
 
-from config import BARK_URL, HGH_LAT, HGH_LON, NOTIFY_WEBHOOK_URL, RADAR_RADIUS_NM
+from config import BARK_URL, HGH_LAT, HGH_LON, NOTIFY_WEBHOOK_URL, RADAR_RADIUS_NM, USER_AGENT
 
 logger = logging.getLogger(__name__)
+DEFAULT_HEADERS = {"User-Agent": USER_AGENT}
 
 
-async def fetch_hgh_nearby_aircraft(radius_nm: int = RADAR_RADIUS_NM) -> list[dict[str, Any]]:
-    """查询 HGH 周边指定海里范围内的实时飞机。"""
-    url = f"https://api.adsb.lol/v2/point/{HGH_LAT}/{HGH_LON}/{radius_nm}"
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload.get("ac", []) or []
+def merge_adsb_records(batches: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """合并多个 ADS-B 数据源的返回结果，按 hex 去重并保留最新鲜的点位。"""
+    merged: dict[str, dict[str, Any]] = {}
+    for batch in batches:
+        for ac in batch:
+            hx = str(ac.get("hex") or "").strip().lower()
+            if not hx:
+                continue
+            prev = merged.get(hx)
+            if prev is None:
+                merged[hx] = dict(ac)
+                continue
+
+            # 优先保留 seen 更小（更新鲜）的坐标，同时补齐缺失字段
+            prev_seen = float(prev.get("seen") if prev.get("seen") is not None else 9999)
+            cur_seen = float(ac.get("seen") if ac.get("seen") is not None else 9999)
+            if cur_seen < prev_seen:
+                combined = {**prev, **ac}
+            else:
+                combined = {**ac, **prev}
+            merged[hx] = combined
+    return list(merged.values())
+
+
+async def _fetch_single_source(
+    client: httpx.AsyncClient, name: str, url: str
+) -> tuple[str, list[dict[str, Any]]]:
+    resp = await client.get(url, headers=DEFAULT_HEADERS)
+    resp.raise_for_status()
+    payload = resp.json()
+    items = payload.get("ac") or payload.get("aircraft") or []
+    return name, items
+
+
+async def fetch_hgh_nearby_multi_source(
+    radius_nm: int = RADAR_RADIUS_NM,
+) -> tuple[list[dict[str, Any]], list[str], int]:
+    """并发从多个免费 ADS-B 源拉取 HGH 周边实时飞机并合并去重。
+
+    Returns:
+        (merged_aircraft, ok_source_names, total_sources)
+    """
+    sources = [
+        ("adsb.lol", f"https://api.adsb.lol/v2/point/{HGH_LAT}/{HGH_LON}/{radius_nm}"),
+        ("airplanes.live", f"https://api.airplanes.live/v2/point/{HGH_LAT}/{HGH_LON}/{radius_nm}"),
+        ("adsb.one", f"https://api.adsb.one/v2/point/{HGH_LAT}/{HGH_LON}/{radius_nm}"),
+        ("adsb.fi", f"https://opendata.adsb.fi/api/v2/lat/{HGH_LAT}/lon/{HGH_LON}/dist/{radius_nm}"),
+    ]
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        tasks = [_fetch_single_source(client, name, url) for name, url in sources]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    batches: list[list[dict[str, Any]]] = []
+    ok_names: list[str] = []
+    for res in results:
+        if isinstance(res, Exception):
+            logger.debug("ADS-B 数据源请求失败: %s", res)
+            continue
+        name, items = res
+        ok_names.append(name)
+        batches.append(items)
+
+    return merge_adsb_records(batches), ok_names, len(sources)
 
 
 async def fetch_aircraft_by_hexes(hex_list: list[str]) -> list[dict[str, Any]]:
@@ -27,7 +85,7 @@ async def fetch_aircraft_by_hexes(hex_list: list[str]) -> list[dict[str, Any]]:
     if not hex_list:
         return []
     results: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with httpx.AsyncClient(timeout=8.0, headers=DEFAULT_HEADERS) as client:
         for i in range(0, len(hex_list), 30):
             chunk = ",".join(hex_list[i : i + 30])
             url = f"https://api.adsb.lol/v2/hex/{chunk}"
@@ -47,7 +105,7 @@ async def lookup_route_by_callsign(callsign: str) -> tuple[str, str]:
         return "", ""
     url = f"https://hexdb.io/api/v1/route/iata/{cs}"
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=DEFAULT_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 return "", ""
@@ -69,7 +127,7 @@ async def lookup_aircraft_by_reg(reg: str) -> dict[str, Any] | None:
         return None
     url = f"https://hexdb.io/api/v2/aircraft?registration={clean_reg}"
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers=DEFAULT_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 return None

@@ -18,7 +18,8 @@ HGH_LON = 120.4319
 
 # 雷达扫描半径（海里）与轮询间隔（秒）
 RADAR_RADIUS_NM = int(os.getenv("RADAR_RADIUS_NM", "80"))
-POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
+USER_AGENT = "HGH-Plane-Spotter/0.2 (personal-hobby-tracker)"
 
 # 可选手机推送配置（留空则不推送）
 # Bark 示例: https://api.day.app/你的Key

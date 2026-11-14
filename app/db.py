@@ -77,6 +77,16 @@ def init_db(db_path: Path = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_runway_time
                 ON runway_logs(landed_at DESC);
 
+            CREATE TABLE IF NOT EXISTS observed_aircraft (
+                hex TEXT PRIMARY KEY,
+                reg TEXT DEFAULT '',
+                model TEXT DEFAULT '',
+                callsign TEXT DEFAULT '',
+                body_type TEXT DEFAULT '其他',
+                is_special_livery INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS adsb_track_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hex TEXT NOT NULL,
@@ -180,6 +190,42 @@ def upsert_watchlist_item(item: dict[str, Any], db_path: Path = DB_PATH) -> None
                 item.get("livery_name", ""),
                 item.get("img_url", ""),
                 now,
+            ),
+        )
+
+
+def upsert_observed_aircraft(
+    hex_code: str,
+    reg: str,
+    model: str,
+    callsign: str,
+    body_type: str,
+    is_special_livery: bool,
+    db_path: Path = DB_PATH,
+) -> None:
+    """记录所有观测到的飞机档案。"""
+    with get_conn(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO observed_aircraft (
+                hex, reg, model, callsign, body_type, is_special_livery, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hex) DO UPDATE SET
+                reg = CASE WHEN excluded.reg != '' THEN excluded.reg ELSE observed_aircraft.reg END,
+                model = CASE WHEN excluded.model != '' THEN excluded.model ELSE observed_aircraft.model END,
+                callsign = CASE WHEN excluded.callsign != '' THEN excluded.callsign ELSE observed_aircraft.callsign END,
+                body_type = excluded.body_type,
+                is_special_livery = MAX(observed_aircraft.is_special_livery, excluded.is_special_livery),
+                last_seen_at = excluded.last_seen_at
+            """,
+            (
+                hex_code.strip().lower(),
+                reg.strip().upper(),
+                model.strip().upper(),
+                callsign.strip().upper(),
+                body_type,
+                1 if is_special_livery else 0,
+                _now_iso(),
             ),
         )
 
@@ -317,14 +363,21 @@ def record_runway_landing(
         return True
 
 
-def get_runway_history(limit: int = 50, db_path: Path = DB_PATH) -> dict[str, Any]:
-    """查询历史跑道记录及各跑道分布统计。"""
+def get_runway_history(limit: int = 80, db_path: Path = DB_PATH) -> dict[str, Any]:
+    """查询历史跑道记录及各跑道分布统计（覆盖所有观测到的飞机）。"""
     with get_conn(db_path) as conn:
         logs = conn.execute(
             """
-            SELECT r.*, w.livery_name, w.model, w.category
+            SELECT r.*,
+                   COALESCE(w.livery_name, '') AS livery_name,
+                   COALESCE(NULLIF(w.model, ''), o.model, '') AS model,
+                   COALESCE(w.category, o.body_type, '其他') AS category,
+                   COALESCE(o.body_type, '其他') AS body_type,
+                   CASE WHEN w.hex IS NOT NULL AND w.is_active = 1 AND w.category LIKE '%彩绘%' THEN 1
+                        ELSE COALESCE(o.is_special_livery, 0) END AS is_special_livery
             FROM runway_logs r
             LEFT JOIN aircraft_watchlist w ON r.hex = w.hex
+            LEFT JOIN observed_aircraft o ON r.hex = o.hex
             ORDER BY r.landed_at DESC
             LIMIT ?
             """,
@@ -348,7 +401,7 @@ def get_runway_history(limit: int = 50, db_path: Path = DB_PATH) -> dict[str, An
 
 
 def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
-    """基于过去 N 天历史航线规律，生成未来 1~2 天的串飞参考预测。"""
+    """基于过去 N 天历史航线规律，生成未来 1~2 天的串飞参考预测（覆盖所有观测飞机）。"""
     now_dt = datetime.now(CHINA_TZ)
     cutoff = (now_dt - timedelta(days=days)).isoformat(timespec="seconds")
     tomorrow_wd = (now_dt + timedelta(days=1)).isoweekday()
@@ -357,14 +410,23 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
     with get_conn(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT f.hex, w.reg, w.livery_name, w.category, w.model,
+            SELECT f.hex,
+                   COALESCE(NULLIF(w.reg, ''), o.reg, f.hex) AS reg,
+                   COALESCE(w.livery_name, '') AS livery_name,
+                   COALESCE(w.category, o.body_type, '其他') AS category,
+                   COALESCE(NULLIF(w.model, ''), o.model, '') AS model,
+                   COALESCE(o.body_type, '其他') AS body_type,
+                   CASE WHEN w.hex IS NOT NULL AND w.is_active = 1 AND w.category LIKE '%彩绘%' THEN 1
+                        ELSE COALESCE(o.is_special_livery, 0) END AS is_special_livery,
                    f.callsign, f.origin_icao, f.dest_icao, f.weekday,
                    COUNT(*) AS freq, MAX(f.last_seen_at) AS last_seen_at
             FROM flight_records f
-            JOIN aircraft_watchlist w ON f.hex = w.hex
+            LEFT JOIN aircraft_watchlist w ON f.hex = w.hex
+            LEFT JOIN observed_aircraft o ON f.hex = o.hex
             WHERE f.last_seen_at >= ? AND (f.origin_icao != '' OR f.dest_icao != '')
             GROUP BY f.hex, f.callsign, f.origin_icao, f.dest_icao, f.weekday
-            ORDER BY freq DESC, last_seen_at DESC
+            ORDER BY is_special_livery DESC, freq DESC, last_seen_at DESC
+            LIMIT 150
             """,
             (cutoff,),
         ).fetchall()
