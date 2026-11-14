@@ -202,6 +202,22 @@ async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:
     return arr_rows + dep_rows
 
 
+async def fetch_hgh_metar() -> dict[str, Any] | None:
+    """从 AviationWeather 获取 ZSHC (HGH) 实时 METAR 风向与能见度。"""
+    url = "https://aviationweather.gov/api/data/metar?ids=ZSHC&format=json"
+    try:
+        async with httpx.AsyncClient(timeout=8.0, headers=DEFAULT_HEADERS) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if isinstance(data, list) and data:
+                return data[0]
+    except Exception as exc:
+        logger.debug("获取 ZSHC METAR 失败: %s", exc)
+    return None
+
+
 async def send_phone_alert(title: str, body: str) -> None:
     """向手机发送 Bark 或通用 Webhook 提醒。"""
     if not BARK_URL and not NOTIFY_WEBHOOK_URL:

@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>HGH 个人拍机助手</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     :root {
       --bg: #0b1220;
@@ -188,6 +190,26 @@
     .time-grid .tg-val { font-size: 14px; font-weight: 600; color: var(--text); }
     .time-grid .tg-val.actual { color: var(--ok); }
     .time-grid .tg-val.est { color: var(--accent); }
+    .metar-bar {
+      background: #101a2e;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .metar-bar b { color: var(--ok); }
+    #radarMap {
+      height: 300px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
@@ -200,6 +222,9 @@
   </header>
 
   <main>
+    <!-- HGH 实时风向与跑道建议 -->
+    <div id="metarBar" class="metar-bar">正在获取 HGH 实时风向天气...</div>
+
     <!-- 全局双筛选栏 -->
     <div id="dualFilterBar" class="filter-bar">
       <div class="filter-row">
@@ -228,8 +253,12 @@
     <section id="tab-radar">
       <div class="section-title">
         <span>HGH 周边全量观测（彩绘与关注置顶）</span>
-        <span id="radarCount">0 架</span>
+        <span>
+          <button class="btn-ghost" onclick="toggleMap()" id="mapToggleBtn">展开地图</button>
+          <span id="radarCount" style="margin-left:6px;">0 架</span>
+        </span>
       </div>
+      <div id="radarMap" class="hidden"></div>
       <div id="radarList"></div>
     </section>
 
@@ -297,6 +326,56 @@
     let cachedSched = null;
     let cachedPreds = null;
     let cachedRunways = null;
+    let mapOpen = false;
+    let leafletMap = null;
+    let aircraftLayer = null;
+
+    function toggleMap() {
+      mapOpen = !mapOpen;
+      const el = document.getElementById('radarMap');
+      el.classList.toggle('hidden', !mapOpen);
+      document.getElementById('mapToggleBtn').textContent = mapOpen ? '收起地图' : '展开地图';
+      if (mapOpen) {
+        initMapIfNeeded();
+        setTimeout(() => { leafletMap.invalidateSize(); if (cachedRadar) renderRadar(cachedRadar); }, 100);
+      }
+    }
+
+    function initMapIfNeeded() {
+      if (leafletMap || typeof L === 'undefined') return;
+      leafletMap = L.map('radarMap').setView([30.2371, 120.4319], 10);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        maxZoom: 18,
+      }).addTo(leafletMap);
+
+      // 绘制 HGH 两条跑道及约 15km 五边延长线
+      const runways = [
+        [[30.171, 120.285], [30.287, 120.577], '07 / 25 跑道'],
+        [[30.187, 120.275], [30.301, 120.571], '06 / 24 跑道'],
+      ];
+      runways.forEach(([p1, p2, label]) => {
+        L.polyline([p1, p2], { color: '#38bdf8', weight: 2, dashArray: '5,5', opacity: 0.7 }).addTo(leafletMap).bindTooltip(label);
+      });
+      aircraftLayer = L.layerGroup().addTo(leafletMap);
+    }
+
+    function updateMapMarkers(list) {
+      if (!mapOpen || !leafletMap || !aircraftLayer) return;
+      aircraftLayer.clearLayers();
+      list.forEach(ac => {
+        if (ac.lat == null || ac.lon == null) return;
+        const color = ac.is_special_livery ? '#f43f5e' : (ac.flight_phase === '进港' ? '#22c55e' : '#38bdf8');
+        const marker = L.circleMarker([ac.lat, ac.lon], {
+          radius: ac.is_special_livery ? 8 : 5,
+          color,
+          fillColor: color,
+          fillOpacity: 0.85,
+        });
+        marker.bindPopup(`<b>${ac.livery_name || ac.reg || ac.callsign || ac.hex}</b><br/>${ac.model || '-'} · ${ac.flight_phase}<br/>高度 ${ac.alt_ft} ft · 距HGH ${ac.dist_hgh_km} km`);
+        marker.addTo(aircraftLayer);
+      });
+    }
 
     function matchDualFilter(item) {
       if (filterBody !== '全部' && (item.body_type || '其他') !== filterBody) return false;
@@ -396,6 +475,11 @@
     }
 
     function renderRadar(data) {
+      const m = data.metar || {};
+      document.getElementById('metarBar').innerHTML = m.raw
+        ? `<span>ZSHC 天气: 风向 <b>${m.wdir ?? '-'}°</b> ${m.wspd_kt ?? 0}kt · ${m.temp_c ?? '-'}°C · 能见度 ${m.visib_km ?? '-'}km</span><span>建议蹲: <b>${m.suggested_runway || '-'}</b></span>`
+        : '<span>ZSHC 实时天气加载中...</span>';
+
       const srcInfo = data.sources_total
         ? ` · ${data.sources_ok.length}/${data.sources_total}源 · ${data.poll_interval_seconds}s`
         : '';
@@ -410,6 +494,7 @@
       document.getElementById('radarList').innerHTML = filtered.length
         ? filtered.map(renderAircraftCard).join('')
         : '<div class="card sub">当前筛选条件下暂无雷达目标（可切换上方筛选或点击“刷新”）。</div>';
+      updateMapMarkers(filtered);
     }
 
     async function loadRadar() {
@@ -465,6 +550,9 @@
         ? rows.map(s => {
           const dir = s.direction || s.flight_phase || '进港';
           const dirClass = dir === '进港' ? 'ok' : 'warn';
+          const csTxt = (s.codeshares && s.codeshares.length)
+            ? ` · 共享: ${s.codeshares.join('/')}`
+            : '';
           return `
           <div class="card">
             <div class="row">
@@ -475,7 +563,7 @@
                 <span class="badge">${s.status || '-'}</span>
               </div>
             </div>
-            <div class="sub">机型: <b>${s.aircraft_icao || '-'}</b> · 呼号: ${s.flight_icao || '-'}</div>
+            <div class="sub">机型: <b>${s.aircraft_icao || '-'}</b> · 呼号: ${s.flight_icao || '-'}${csTxt}</div>
             <div class="time-grid">
               <div class="tg-head"></div>
               <div class="tg-head">计划</div>

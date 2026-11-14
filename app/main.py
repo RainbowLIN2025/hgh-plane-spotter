@@ -82,6 +82,7 @@ async def get_radar(body_type: str = "", livery: str = "", phase: str = "") -> d
         "poll_interval_seconds": POLL_INTERVAL_SECONDS,
         "sources_ok": tracker.state.sources_ok,
         "sources_total": tracker.state.sources_total,
+        "metar": tracker.state.metar,
         "watchlist_live": [x for x in tracker.state.watchlist_live if _match(x)],
         "hgh_nearby": [x for x in tracker.state.hgh_nearby if _match(x)],
     }
@@ -144,21 +145,45 @@ async def get_runways(limit: int = 80) -> dict[str, Any]:
 
 
 @app.get("/api/schedules")
-async def get_schedules(limit: int = 300) -> dict[str, Any]:
-    rows = db.get_hgh_schedules(limit=limit)
-    for r in rows:
+async def get_schedules(limit: int = 400) -> dict[str, Any]:
+    raw_rows = db.get_hgh_schedules(limit=limit)
+    grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    ordered: list[dict[str, Any]] = []
+
+    for r in raw_rows:
+        direction = r.get("direction") or ("进港" if r.get("arr_iata") == "HGH" else "出港")
+        sig = (
+            direction,
+            r.get("dep_iata", ""),
+            r.get("arr_iata", ""),
+            r.get("dep_time", ""),
+            r.get("arr_time", ""),
+        )
+        code = r.get("flight_iata") or r.get("flight_icao") or ""
+        if sig in grouped:
+            existing = grouped[sig]
+            if code and code not in existing["codeshares"] and code != (existing.get("flight_iata") or existing.get("flight_icao")):
+                existing["codeshares"].append(code)
+            if not existing.get("aircraft_icao") and r.get("aircraft_icao"):
+                existing["aircraft_icao"] = r["aircraft_icao"]
+            continue
+
         body_type, is_special = classifier.classify_aircraft(
             r.get("aircraft_icao", ""), r.get("flight_icao", ""), None
         )
         r["body_type"] = body_type
         r["is_special_livery"] = is_special
-        r["flight_phase"] = r.get("direction") or ("进港" if r.get("arr_iata") == "HGH" else "出港")
+        r["flight_phase"] = direction
+        r["codeshares"] = []
+        grouped[sig] = r
+        ordered.append(r)
+
     return {
         "configured": bool(AIRLABS_API_KEY),
         "last_sync": tracker.state.last_schedule_sync.isoformat(timespec="seconds")
         if tracker.state.last_schedule_sync
         else "",
-        "rows": rows,
+        "rows": ordered,
     }
 
 

@@ -34,6 +34,8 @@ class SpotterState:
         self.route_cache: dict[str, tuple[str, str, datetime]] = {}
         self.alerted_recent: dict[str, datetime] = {}
         self.last_schedule_sync: datetime | None = None
+        self.last_metar_sync: datetime | None = None
+        self.metar: dict[str, Any] = {}
         self.last_error: str = ""
 
 
@@ -137,9 +139,41 @@ async def sync_schedules_once() -> int:
     return cnt
 
 
+async def sync_metar_once() -> None:
+    """刷新 HGH 实时风向与天气并推算建议蹲守跑道方向。"""
+    raw = await adsb_client.fetch_hgh_metar()
+    if not raw:
+        return
+    wdir = raw.get("wdir")
+    wspd = raw.get("wspd") or 0
+    temp = raw.get("temp")
+    visib_mi = raw.get("visib")
+    visib_km = round(float(visib_mi) * 1.609, 1) if isinstance(visib_mi, (int, float)) else None
+
+    suggested = "微风/双向皆可"
+    if isinstance(wdir, (int, float)) and float(wspd) > 3:
+        diff_06 = geo.heading_diff_deg(float(wdir), 69.0)
+        diff_24 = geo.heading_diff_deg(float(wdir), 249.0)
+        suggested = "06 / 07 方向（向东逆风）" if diff_06 <= diff_24 else "24 / 25 方向（向西逆风）"
+
+    state.metar = {
+        "wdir": wdir,
+        "wspd_kt": wspd,
+        "temp_c": temp,
+        "visib_km": visib_km,
+        "flt_cat": raw.get("fltCat") or "",
+        "suggested_runway": suggested,
+        "raw": raw.get("rawOb") or "",
+    }
+    state.last_metar_sync = datetime.now(CHINA_TZ)
+
+
 async def run_once() -> None:
     """执行单轮多源雷达拉取、全量飞机记录、航线匹配与跑道判定。"""
     now_dt = datetime.now(CHINA_TZ)
+    if state.last_metar_sync is None or (now_dt - state.last_metar_sync) >= timedelta(minutes=15):
+        await sync_metar_once()
+
     if AIRLABS_API_KEY and (
         state.last_schedule_sync is None
         or (now_dt - state.last_schedule_sync) >= timedelta(minutes=SCHEDULE_SYNC_INTERVAL_MINUTES)
