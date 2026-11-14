@@ -10,9 +10,11 @@ fi
 source .venv/bin/activate
 pip install -q -r requirements.txt
 
+PORT="${PORT:-8787}"
+
 echo "=================================================="
-echo "HGH 个人拍机助手已启动: http://0.0.0.0:8000"
-echo "若已开启 Tailscale，手机浏览器访问: http://<本机Tailscale_IP>:8000"
+echo "HGH 个人拍机助手已启动: http://127.0.0.1:${PORT}"
+echo "若已开启 Tailscale，手机浏览器访问: http://<本机Tailscale_IP>:${PORT}"
 echo "=================================================="
 
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT}"

@@ -16,12 +16,12 @@
 chmod +x start.sh
 ./start.sh
 ```
-启动后本机浏览器访问：`http://127.0.0.1:8000`
+启动后本机浏览器访问：`http://127.0.0.1:8787`（如需自定义端口可先执行 `export PORT=你的端口`）
 
 ### 2. 出门只带手机如何访问？（Tailscale）
 1. 在家里的 Mac 和随身手机上分别安装 **Tailscale** 并登录同一个账号。
 2. 在 Mac 终端或 Tailscale 状态栏查看本机的虚拟内网 IP（通常为 `100.x.x.x`）。
-3. 出门在外开启手机 Tailscale 后，手机浏览器直接访问：`http://100.x.x.x:8000`（建议添加到手机主屏幕）。
+3. 出门在外开启手机 Tailscale 后，手机浏览器直接访问：`http://100.x.x.x:8787`（建议添加到手机主屏幕）。
 4. 保持家里 Mac 插电且关闭系统休眠即可持续挂机记录历史航线与跑道。
 
 ### 3. 批量添加你关注的彩绘机 / 货机注册号
@@ -42,7 +42,7 @@ export BARK_URL="https://api.day.app/你的BarkKey"
 项目内置 `Dockerfile`，如需迁移到 1 核 1G 轻量云主机，直接构建运行即可：
 ```bash
 docker build -t hgh-spotter .
-docker run -d -p 8000:8000 -v $(pwd)/data:/app/data -e HGH_DB_PATH=/app/data/hgh_spotter.db hgh-spotter
+docker run -d -p 8787:8787 -v $(pwd)/data:/app/data -e HGH_DB_PATH=/app/data/hgh_spotter.db hgh-spotter
 ```
 
 ## 注意事项
