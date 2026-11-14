@@ -99,24 +99,34 @@ async def fetch_aircraft_by_hexes(hex_list: list[str]) -> list[dict[str, Any]]:
 
 
 async def lookup_route_by_callsign(callsign: str) -> tuple[str, str]:
-    """通过 hexdb.io 查询呼号对应的起降机场代码。"""
+    """优先通过 adsbdb.com 查询呼号航线，查不到时兜底查询 hexdb.io。"""
     cs = callsign.strip().upper()
     if not cs:
         return "", ""
-    url = f"https://hexdb.io/api/v1/route/iata/{cs}"
-    try:
-        async with httpx.AsyncClient(timeout=5.0, headers=DEFAULT_HEADERS) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                return "", ""
-            data = resp.json()
-            route_str = str(data.get("route", "")).strip()
-            if "-" in route_str:
-                parts = [p.strip() for p in route_str.split("-") if p.strip()]
-                if len(parts) >= 2:
-                    return parts[0], parts[-1]
-    except Exception:
-        return "", ""
+    async with httpx.AsyncClient(timeout=5.0, headers=DEFAULT_HEADERS) as client:
+        # 1. adsbdb.com (覆盖率高)
+        try:
+            resp = await client.get(f"https://api.adsbdb.com/v0/callsign/{cs}")
+            if resp.status_code == 200:
+                fr = (resp.json().get("response") or {}).get("flightroute") or {}
+                ori = (fr.get("origin") or {}).get("iata_code") or (fr.get("origin") or {}).get("icao_code") or ""
+                dst = (fr.get("destination") or {}).get("iata_code") or (fr.get("destination") or {}).get("icao_code") or ""
+                if ori or dst:
+                    return str(ori).upper(), str(dst).upper()
+        except Exception:
+            pass
+
+        # 2. hexdb.io 兜底
+        try:
+            resp = await client.get(f"https://hexdb.io/api/v1/route/iata/{cs}")
+            if resp.status_code == 200:
+                route_str = str(resp.json().get("route", "")).strip()
+                if "-" in route_str:
+                    parts = [p.strip() for p in route_str.split("-") if p.strip()]
+                    if len(parts) >= 2:
+                        return parts[0], parts[-1]
+        except Exception:
+            pass
     return "", ""
 
 
