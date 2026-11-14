@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>HGH 个人拍机助手</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #141e33;
+      --border: #24324d;
+      --text: #e6edf7;
+      --muted: #8ca0c2;
+      --accent: #38bdf8;
+      --highlight: #f43f5e;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding-bottom: 72px;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(11, 18, 32, 0.94);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { margin: 0; font-size: 16px; }
+    .meta { font-size: 12px; color: var(--muted); }
+    .btn {
+      background: var(--accent);
+      color: #08101e;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    main { padding: 12px 14px; max-width: 720px; margin: 0 auto; }
+    .section-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 14px 0 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .card.watched {
+      border-color: var(--highlight);
+      box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.35);
+    }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .title { font-weight: 700; font-size: 15px; }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #1f2d47;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .badge.hot { background: rgba(244, 63, 94, 0.2); color: #fb7185; }
+    .badge.ok { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+    .sub { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    .thumb {
+      width: 100%;
+      max-height: 160px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-top: 8px;
+    }
+    nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #0f172a;
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      height: 58px;
+    }
+    nav button {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    nav button.active { color: var(--accent); font-weight: 700; }
+    .hidden { display: none; }
+    .form-grid { display: grid; gap: 8px; margin-bottom: 12px; }
+    input, select {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0d1526;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .links { margin-top: 8px; display: flex; gap: 8px; }
+    .links a {
+      font-size: 12px;
+      color: var(--accent);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>HGH 萧山拍机雷达</h1>
+      <div class="meta" id="statusText">等待更新...</div>
+    </div>
+    <button class="btn" onclick="manualRefresh()">刷新</button>
+  </header>
+
+  <main>
+    <!-- Tab 1: 实时雷达 -->
+    <section id="tab-radar">
+      <div class="section-title">
+        <span>空中目标（关注飞机置顶）</span>
+        <span id="radarCount">0 架</span>
+      </div>
+      <div id="radarList"></div>
+    </section>
+
+    <!-- Tab 2: 1-2天规律预测 -->
+    <section id="tab-pred" class="hidden">
+      <div class="section-title">
+        <span>近 14 天串飞规律（辅助提前 1~2 天预判）</span>
+      </div>
+      <div id="predList"></div>
+    </section>
+
+    <!-- Tab 3: HGH 历史跑道记录 -->
+    <section id="tab-runway" class="hidden">
+      <div class="section-title"><span>HGH 跑道分布统计 (06/24 · 07/25)</span></div>
+      <div id="runwayStats" class="card"></div>
+      <div class="section-title"><span>历史降落日志</span></div>
+      <div id="runwayLogs"></div>
+    </section>
+
+    <!-- Tab 4: 关注清单管理 -->
+    <section id="tab-watch" class="hidden">
+      <div class="card">
+        <div class="title" style="margin-bottom:8px;">添加彩绘机 / 货机</div>
+        <div class="form-grid">
+          <input id="inReg" placeholder="注册号，如 B-2021（必填，自动查 Hex）" />
+          <input id="inLivery" placeholder="涂装/备注名，如 进博号 / 顺丰747" />
+          <select id="inCategory">
+            <option value="彩绘客机">彩绘客机</option>
+            <option value="货机">货机</option>
+          </select>
+          <input id="inHex" placeholder="Hex 编码（可选，留空自动查 hexdb.io）" />
+          <button class="btn" onclick="addWatch()">添加到监控清单</button>
+        </div>
+      </div>
+      <div class="section-title"><span>当前监控清单</span></div>
+      <div id="watchList"></div>
+    </section>
+  </main>
+
+  <nav>
+    <button class="active" onclick="switchTab('radar', this)">实时雷达</button>
+    <button onclick="switchTab('pred', this)">航线预测</button>
+    <button onclick="switchTab('runway', this)">跑道记录</button>
+    <button onclick="switchTab('watch', this)">关注清单</button>
+  </nav>
+
+  <script>
+    let currentTab = 'radar';
+
+    function switchTab(tab, el) {
+      currentTab = tab;
+      document.querySelectorAll('main section').forEach(s => s.classList.add('hidden'));
+      document.getElementById('tab-' + tab).classList.remove('hidden');
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      el.classList.add('active');
+      if (tab === 'radar') loadRadar();
+      if (tab === 'pred') loadPredictions();
+      if (tab === 'runway') loadRunways();
+      if (tab === 'watch') loadWatchlist();
+    }
+
+    async function manualRefresh() {
+      document.getElementById('statusText').textContent = '正在拉取最新 ADS-B...';
+      await fetch('/api/radar/refresh', { method: 'POST' });
+      await loadRadar();
+    }
+
+    function renderAircraftCard(ac) {
+      const route = (ac.origin || ac.dest) ? `${ac.origin || '?'} → ${ac.dest || '?'}` : '航线未知';
+      const eta = ac.eta_hgh_min ? `预计 ${ac.eta_hgh_min} 分钟后到 HGH` : '';
+      const alt = ac.alt_ft < 90000 ? `${ac.alt_ft} ft` : '未知高度';
+      const trend = ac.baro_rate < -150 ? '↓下降' : (ac.baro_rate > 150 ? '↑爬升' : '→平飞');
+      const img = ac.img_url ? `<img class="thumb" src="${ac.img_url}" loading="lazy" />` : '';
+      const fr24Url = ac.reg ? `https://www.flightradar24.com/data/aircraft/${ac.reg.toLowerCase()}` : '#';
+      return `
+        <div class="card ${ac.is_watched ? 'watched' : ''}">
+          <div class="row">
+            <div class="title">${ac.livery_name || ac.reg || ac.hex}</div>
+            <span class="badge ${ac.is_watched ? 'hot' : ''}">${ac.is_watched ? ac.category : '周边航班'}</span>
+          </div>
+          <div class="sub">
+            注册号: <b>${ac.reg || '-'}</b> · 机型: ${ac.model || '-'} · 呼号: ${ac.callsign || '-'}<br/>
+            航线: <b>${route}</b> ${eta ? `· <span style="color:var(--ok)">${eta}</span>` : ''}<br/>
+            距 HGH: <b>${ac.dist_hgh_km ?? '-'} km</b> · 高度: ${alt} (${trend}) · 航向: ${ac.track_deg ?? '-'}°
+          </div>
+          ${img}
+          <div class="links">
+            <a href="${fr24Url}" target="_blank">FR24 排班</a>
+          </div>
+        </div>
+      `;
+    }
+
+    async function loadRadar() {
+      const res = await fetch('/api/radar');
+      const data = await res.json();
+      document.getElementById('statusText').textContent = data.last_error
+        ? `异常: ${data.last_error}`
+        : `更新于 ${data.last_updated || '尚未完成首次轮询'}`;
+
+      const watchedRemote = (data.watchlist_live || []).filter(x => (x.dist_hgh_km ?? 9999) > 160);
+      const list = [...(data.hgh_nearby || []), ...watchedRemote];
+      document.getElementById('radarCount').textContent = `${list.length} 架`;
+      document.getElementById('radarList').innerHTML = list.length
+        ? list.map(renderAircraftCard).join('')
+        : '<div class="card sub">当前 HGH 周边暂无雷达目标或正在首次拉取中，可点击右上角“刷新”。</div>';
+    }
+
+    async function loadPredictions() {
+      const res = await fetch('/api/predictions');
+      const rows = await res.json();
+      document.getElementById('predList').innerHTML = rows.length
+        ? rows.map(r => `
+          <div class="card">
+            <div class="row">
+              <div class="title">${r.livery_name || r.reg} (${r.model || '-'})</div>
+              <span class="badge ${r.confidence === '高' ? 'ok' : ''}">${r.match_window} · ${r.confidence}</span>
+            </div>
+            <div class="sub">
+              注册号: ${r.reg} · 呼号: ${r.callsign || '-'}<br/>
+              常飞航线: <b>${r.origin_icao || '?'} → ${r.dest_icao || '?'}</b> · 近14天出现 ${r.freq} 次<br/>
+              最近记录: ${r.last_seen_at}
+            </div>
+          </div>
+        `).join('')
+        : '<div class="card sub">暂无足够历史飞行数据，后台持续运行几天后将自动生成规律预测。</div>';
+    }
+
+    async function loadRunways() {
+      const res = await fetch('/api/runways');
+      const data = await res.json();
+      const stats = data.stats || [];
+      document.getElementById('runwayStats').innerHTML = stats.length
+        ? stats.map(s => `<div class="sub">跑道 <b>${s.runway_ident}</b>：共 ${s.cnt} 次（其中白天可拍 ${s.daylight_cnt || 0} 次）</div>`).join('')
+        : '<div class="sub">暂无跑道统计数据。</div>';
+
+      const logs = data.logs || [];
+      document.getElementById('runwayLogs').innerHTML = logs.length
+        ? logs.map(l => `
+          <div class="card">
+            <div class="row">
+              <div class="title">${l.livery_name || l.reg || l.hex} → 跑道 ${l.runway_ident}</div>
+              <span class="badge ${l.is_daylight ? 'ok' : ''}">${l.is_daylight ? '白天' : '夜间'}</span>
+            </div>
+            <div class="sub">
+              呼号: ${l.callsign || '-'} · 最低捕获高度: ${l.min_alt_ft} ft<br/>
+              落地时间: ${l.landed_at}
+            </div>
+          </div>
+        `).join('')
+        : '<div class="card sub">暂无 HGH 降落跑道记录。</div>';
+    }
+
+    async function loadWatchlist() {
+      const res = await fetch('/api/watchlist');
+      const rows = await res.json();
+      document.getElementById('watchList').innerHTML = rows.length
+        ? rows.map(w => `
+          <div class="card">
+            <div class="row">
+              <div class="title">${w.livery_name || w.reg}</div>
+              <button class="btn-ghost" onclick="delWatch('${w.hex}')">移除</button>
+            </div>
+            <div class="sub">
+              注册号: ${w.reg} · Hex: ${w.hex} · 机型: ${w.model || '-'} · 分类: ${w.category}
+            </div>
+          </div>
+        `).join('')
+        : '<div class="card sub">监控清单为空，请在上方添加彩绘机或货机注册号。</div>';
+    }
+
+    async function addWatch() {
+      const reg = document.getElementById('inReg').value.trim();
+      if (!reg) return alert('请填写注册号');
+      const res = await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reg,
+          livery_name: document.getElementById('inLivery').value.trim(),
+          category: document.getElementById('inCategory').value,
+          hex: document.getElementById('inHex').value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.detail || '添加失败');
+      document.getElementById('inReg').value = '';
+      document.getElementById('inLivery').value = '';
+      document.getElementById('inHex').value = '';
+      loadWatchlist();
+    }
+
+    async function delWatch(hex) {
+      await fetch('/api/watchlist/' + hex, { method: 'DELETE' });
+      loadWatchlist();
+    }
+
+    loadRadar();
+    setInterval(() => { if (currentTab === 'radar') loadRadar(); }, 30000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[
+  {
+    "hex": "7809e4",
+    "reg": "B-2021",
+    "category": "彩绘客机",
+    "airline": "中国国际航空",
+    "model": "B77W",
+    "livery_name": "爱China彩绘 (示例)",
+    "img_url": "",
+    "is_active": true
+  },
+  {
+    "hex": "7818f4",
+    "reg": "B-2001",
+    "category": "彩绘客机",
+    "airline": "中国东方航空",
+    "model": "B77W",
+    "livery_name": "进博号彩绘 (示例)",
+    "img_url": "",
+    "is_active": true
+  }
+]
