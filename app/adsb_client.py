@@ -165,28 +165,41 @@ async def lookup_aircraft_by_reg(reg: str) -> dict[str, Any] | None:
         return None
 
 
-async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:
-    """通过 AirLabs Schedules API 拉取 HGH 进港排班（计划/预计/实际起降时间）。"""
-    key = api_key.strip()
-    if not key:
-        return []
+async def _fetch_airlabs_direction(
+    client: httpx.AsyncClient, api_key: str, query_param: str, direction: str
+) -> list[dict[str, Any]]:
     url = "https://airlabs.co/api/v9/schedules"
     params = {
-        "arr_iata": "HGH",
-        "api_key": key,
+        query_param: "HGH",
+        "api_key": api_key,
         "_fields": (
             "airline_iata,flight_iata,flight_icao,aircraft_icao,status,"
             "dep_iata,dep_time,dep_estimated,dep_actual,"
             "arr_iata,arr_time,arr_estimated,arr_actual"
         ),
     }
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    payload = resp.json()
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
+    rows = payload.get("response") or []
+    for r in rows:
+        r["direction"] = direction
+    return rows
+
+
+async def fetch_hgh_arrivals_schedule(api_key: str) -> list[dict[str, Any]]:
+    """通过 AirLabs Schedules API 并发拉取 HGH 进港与出港排班。"""
+    key = api_key.strip()
+    if not key:
+        return []
     async with httpx.AsyncClient(timeout=15.0, headers=DEFAULT_HEADERS) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
-        if isinstance(payload, dict) and payload.get("error"):
-            raise RuntimeError(str(payload["error"].get("message") or payload["error"]))
-        return payload.get("response") or []
+        arr_rows, dep_rows = await asyncio.gather(
+            _fetch_airlabs_direction(client, key, "arr_iata", "进港"),
+            _fetch_airlabs_direction(client, key, "dep_iata", "出港"),
+        )
+    return arr_rows + dep_rows
 
 
 async def send_phone_alert(title: str, body: str) -> None:

@@ -89,6 +89,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
 
             CREATE TABLE IF NOT EXISTS hgh_schedules (
                 flight_key TEXT PRIMARY KEY,
+                direction TEXT DEFAULT '进港',
                 flight_iata TEXT DEFAULT '',
                 flight_icao TEXT DEFAULT '',
                 airline_iata TEXT DEFAULT '',
@@ -122,6 +123,10 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 ON adsb_track_cache(hex, seen_at DESC);
             """
         )
+        # 兼容已有数据库：补充 direction 列
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(hgh_schedules)").fetchall()}
+        if "direction" not in cols:
+            conn.execute("ALTER TABLE hgh_schedules ADD COLUMN direction TEXT DEFAULT '进港'")
 
 
 def load_watchlist_from_json(db_path: Path = DB_PATH, json_path: Path = WATCHLIST_PATH) -> int:
@@ -441,7 +446,8 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
             FROM flight_records f
             LEFT JOIN aircraft_watchlist w ON f.hex = w.hex
             LEFT JOIN observed_aircraft o ON f.hex = o.hex
-            WHERE f.last_seen_at >= ? AND (f.origin_icao != '' OR f.dest_icao != '')
+            WHERE f.last_seen_at >= ?
+              AND (f.origin_icao IN ('HGH', 'ZSHC') OR f.dest_icao IN ('HGH', 'ZSHC'))
             GROUP BY f.hex, f.callsign, f.origin_icao, f.dest_icao, f.weekday
             ORDER BY is_special_livery DESC, freq DESC, last_seen_at DESC
             LIMIT 150
@@ -462,25 +468,31 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
 
 
 def upsert_hgh_schedules(items: list[dict[str, Any]], db_path: Path = DB_PATH) -> int:
-    """保存或更新 HGH 进港时刻表（计划/预计/实际起降时间）。"""
+    """保存或更新 HGH 进出港时刻表（计划/预计/实际起降时间）。"""
     now = _now_iso()
     count = 0
     with get_conn(db_path) as conn:
         for it in items:
             f_iata = str(it.get("flight_iata") or "").strip().upper()
             f_icao = str(it.get("flight_icao") or "").strip().upper()
+            dep_iata = str(it.get("dep_iata") or "").strip().upper()
+            arr_iata = str(it.get("arr_iata") or "").strip().upper()
+            direction = str(it.get("direction") or ("进港" if arr_iata == "HGH" else "出港"))
+            dep_time = str(it.get("dep_time") or "").strip()
             arr_time = str(it.get("arr_time") or "").strip()
-            flight_key = f"{f_icao or f_iata}_{arr_time}"
+            anchor_time = arr_time if direction == "进港" else dep_time
+            flight_key = f"{direction}_{f_icao or f_iata}_{anchor_time}"
             if not (f_iata or f_icao):
                 continue
             conn.execute(
                 """
                 INSERT INTO hgh_schedules (
-                    flight_key, flight_iata, flight_icao, airline_iata, aircraft_icao, status,
+                    flight_key, direction, flight_iata, flight_icao, airline_iata, aircraft_icao, status,
                     dep_iata, dep_time, dep_estimated, dep_actual,
                     arr_iata, arr_time, arr_estimated, arr_actual, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(flight_key) DO UPDATE SET
+                    direction=excluded.direction,
                     status=excluded.status,
                     aircraft_icao=COALESCE(NULLIF(excluded.aircraft_icao, ''), hgh_schedules.aircraft_icao),
                     dep_estimated=excluded.dep_estimated,
@@ -491,16 +503,17 @@ def upsert_hgh_schedules(items: list[dict[str, Any]], db_path: Path = DB_PATH) -
                 """,
                 (
                     flight_key,
+                    direction,
                     f_iata,
                     f_icao,
                     str(it.get("airline_iata") or "").upper(),
                     str(it.get("aircraft_icao") or "").upper(),
                     str(it.get("status") or "").lower(),
-                    str(it.get("dep_iata") or "").upper(),
-                    str(it.get("dep_time") or ""),
+                    dep_iata,
+                    dep_time,
                     str(it.get("dep_estimated") or ""),
                     str(it.get("dep_actual") or ""),
-                    str(it.get("arr_iata") or "HGH").upper(),
+                    arr_iata,
                     arr_time,
                     str(it.get("arr_estimated") or ""),
                     str(it.get("arr_actual") or ""),
@@ -511,13 +524,17 @@ def upsert_hgh_schedules(items: list[dict[str, Any]], db_path: Path = DB_PATH) -
     return count
 
 
-def get_hgh_schedules(limit: int = 200, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
-    """查询本地缓存的 HGH 进港时刻表，按预计/计划落地时间排序。"""
+def get_hgh_schedules(limit: int = 300, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """查询本地缓存的 HGH 进出港时刻表，严格按时间顺序排列。"""
     with get_conn(db_path) as conn:
         rows = conn.execute(
             """
             SELECT * FROM hgh_schedules
-            ORDER BY COALESCE(NULLIF(arr_estimated, ''), arr_time) ASC
+            ORDER BY
+                CASE WHEN direction = '进港'
+                     THEN COALESCE(NULLIF(arr_actual, ''), NULLIF(arr_estimated, ''), arr_time)
+                     ELSE COALESCE(NULLIF(dep_actual, ''), NULLIF(dep_estimated, ''), dep_time)
+                END ASC
             LIMIT ?
             """,
             (limit,),

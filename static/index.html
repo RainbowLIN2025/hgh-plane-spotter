@@ -172,6 +172,22 @@
       padding: 3px 8px;
       border-radius: 6px;
     }
+    .time-grid {
+      display: grid;
+      grid-template-columns: 44px repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+      background: #0d1526;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      align-items: center;
+    }
+    .time-grid .tg-head { font-size: 12px; color: var(--muted); }
+    .time-grid .tg-val { font-size: 14px; font-weight: 600; color: var(--text); }
+    .time-grid .tg-val.actual { color: var(--ok); }
+    .time-grid .tg-val.est { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -233,10 +249,10 @@
       <div id="runwayLogs"></div>
     </section>
 
-    <!-- Tab 4: HGH 今日进港时刻表 -->
+    <!-- Tab 4: HGH 今日进出港时刻表 -->
     <section id="tab-sched" class="hidden">
       <div class="section-title">
-        <span>HGH 进港时刻表（计划 / 预计 / 实际）</span>
+        <span>HGH 今日进出港时刻表（按时间顺序）</span>
         <button class="btn-ghost" onclick="refreshSchedules()">手动同步</button>
       </div>
       <div id="schedList"></div>
@@ -266,7 +282,7 @@
 
   <nav style="grid-template-columns: repeat(5, 1fr);">
     <button class="active" onclick="switchTab('radar', this)">实时雷达</button>
-    <button onclick="switchTab('sched', this)">今日进港</button>
+    <button onclick="switchTab('sched', this)">今日进出港</button>
     <button onclick="switchTab('pred', this)">航线预测</button>
     <button onclick="switchTab('runway', this)">跑道记录</button>
     <button onclick="switchTab('watch', this)">关注清单</button>
@@ -287,7 +303,7 @@
       const isSpecial = Boolean(item.is_special_livery);
       if (filterLivery === '仅彩绘' && !isSpecial) return false;
       if (filterLivery === '非彩绘' && isSpecial) return false;
-      if (currentTab === 'radar' && filterPhase !== '全部' && (item.flight_phase || '过境') !== filterPhase) return false;
+      if ((currentTab === 'radar' || currentTab === 'sched') && filterPhase !== '全部' && (item.flight_phase || '过境') !== filterPhase) return false;
       return true;
     }
 
@@ -425,6 +441,12 @@
         : '<div class="card sub">暂无符合当前筛选条件的历史规律记录。</div>';
     }
 
+    function fmtHM(ts) {
+      if (!ts) return '--:--';
+      const parts = String(ts).trim().split(' ');
+      return parts.length >= 2 ? parts[1].slice(0, 5) : String(ts).slice(0, 5);
+    }
+
     function renderSchedules(data) {
       if (!data.configured) {
         document.getElementById('schedList').innerHTML = `
@@ -434,29 +456,45 @@
             2. 在终端运行：<br/>
             <code>export AIRLABS_API_KEY="你的Key"</code><br/>
             <code>cd ~/Desktop/hgh-plane-spotter && ./scripts/install_launchd.sh</code><br/><br/>
-            配置后即可在此查看 HGH 当日所有进港航班的<b>计划 / 预计 / 实际起降时间</b>。
+            配置后即可在此查看 HGH 当日所有进出港航班的<b>计划 / 预计 / 实际起降时间</b>。
           </div>`;
         return;
       }
       const rows = (data.rows || []).filter(matchDualFilter);
       document.getElementById('schedList').innerHTML = rows.length
-        ? rows.map(s => `
+        ? rows.map(s => {
+          const dir = s.direction || s.flight_phase || '进港';
+          const dirClass = dir === '进港' ? 'ok' : 'warn';
+          return `
           <div class="card">
             <div class="row">
-              <div class="title">${s.flight_iata || s.flight_icao} (${s.dep_iata || '?'} → HGH)</div>
+              <div class="title">${s.flight_iata || s.flight_icao} · ${s.dep_iata || '?'} → ${s.arr_iata || '?'}</div>
               <div class="badges">
+                <span class="badge ${dirClass}">${dir}</span>
                 <span class="badge">${s.body_type || '其他'}</span>
-                <span class="badge ${s.status === 'active' ? 'ok' : ''}">${s.status || '-'}</span>
+                <span class="badge">${s.status || '-'}</span>
               </div>
             </div>
-            <div class="sub">
-              机型: <b>${s.aircraft_icao || '-'}</b> · 呼号: ${s.flight_icao || '-'}<br/>
-              起飞: 计划 ${s.dep_time || '-'} · 预计 ${s.dep_estimated || '-'} · 实际 ${s.dep_actual || '-'}<br/>
-              落地: 计划 ${s.arr_time || '-'} · 预计 <b>${s.arr_estimated || '-'}</b> · 实际 <b>${s.arr_actual || '-'}</b>
+            <div class="sub">机型: <b>${s.aircraft_icao || '-'}</b> · 呼号: ${s.flight_icao || '-'}</div>
+            <div class="time-grid">
+              <div class="tg-head"></div>
+              <div class="tg-head">计划</div>
+              <div class="tg-head">预计</div>
+              <div class="tg-head">实际</div>
+
+              <div class="tg-head">起飞</div>
+              <div class="tg-val">${fmtHM(s.dep_time)}</div>
+              <div class="tg-val est">${fmtHM(s.dep_estimated)}</div>
+              <div class="tg-val actual">${fmtHM(s.dep_actual)}</div>
+
+              <div class="tg-head">落地</div>
+              <div class="tg-val">${fmtHM(s.arr_time)}</div>
+              <div class="tg-val est">${fmtHM(s.arr_estimated)}</div>
+              <div class="tg-val actual">${fmtHM(s.arr_actual)}</div>
             </div>
-          </div>
-        `).join('')
-        : '<div class="card sub">暂无符合条件的进港时刻表记录，可点击右上角“手动同步”。</div>';
+          </div>`;
+        }).join('')
+        : '<div class="card sub">暂无符合条件的进出港时刻表记录，可点击右上角“手动同步”。</div>';
     }
 
     async function loadSchedules() {

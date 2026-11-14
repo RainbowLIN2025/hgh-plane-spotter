@@ -144,7 +144,7 @@ async def get_runways(limit: int = 80) -> dict[str, Any]:
 
 
 @app.get("/api/schedules")
-async def get_schedules(limit: int = 200) -> dict[str, Any]:
+async def get_schedules(limit: int = 300) -> dict[str, Any]:
     rows = db.get_hgh_schedules(limit=limit)
     for r in rows:
         body_type, is_special = classifier.classify_aircraft(
@@ -152,6 +152,7 @@ async def get_schedules(limit: int = 200) -> dict[str, Any]:
         )
         r["body_type"] = body_type
         r["is_special_livery"] = is_special
+        r["flight_phase"] = r.get("direction") or ("进港" if r.get("arr_iata") == "HGH" else "出港")
     return {
         "configured": bool(AIRLABS_API_KEY),
         "last_sync": tracker.state.last_schedule_sync.isoformat(timespec="seconds")
