@@ -446,8 +446,7 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
             FROM flight_records f
             LEFT JOIN aircraft_watchlist w ON f.hex = w.hex
             LEFT JOIN observed_aircraft o ON f.hex = o.hex
-            WHERE f.last_seen_at >= ?
-              AND (f.origin_icao IN ('HGH', 'ZSHC') OR f.dest_icao IN ('HGH', 'ZSHC'))
+            WHERE f.last_seen_at >= ? AND (f.origin_icao != '' OR f.dest_icao != '')
             GROUP BY f.hex, f.callsign, f.origin_icao, f.dest_icao, f.weekday
             ORDER BY is_special_livery DESC, freq DESC, last_seen_at DESC
             LIMIT 150
@@ -463,6 +462,9 @@ def get_route_predictions(days: int = 14, db_path: Path = DB_PATH) -> list[dict[
             "明日规律匹配" if wd == tomorrow_wd else ("后日规律匹配" if wd == day_after_wd else f"周{wd}常飞")
         )
         item["confidence"] = "高" if item["freq"] >= 2 else "中/待观察"
+        ori = (item.get("origin_icao") or "").upper()
+        dst = (item.get("dest_icao") or "").upper()
+        item["is_hgh"] = ori in ("HGH", "ZSHC") or dst in ("HGH", "ZSHC")
         results.append(item)
     return results
 

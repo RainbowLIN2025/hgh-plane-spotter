@@ -269,8 +269,16 @@
       <div id="radarList"></div>
     </section>
 
-    <!-- Tab 2: 1-2天规律预测 -->
+    <!-- Tab 3: 1-2天规律预测 -->
     <section id="tab-pred" class="hidden">
+      <div class="filter-bar" style="margin-bottom:8px;">
+        <div class="filter-row">
+          <span class="filter-label">机场:</span>
+          <button class="chip active" onclick="setPredHghFilter('仅HGH', this)">HGH</button>
+          <button class="chip" onclick="setPredHghFilter('非HGH', this)">非HGH</button>
+          <button class="chip" onclick="setPredHghFilter('全部', this)">全部</button>
+        </div>
+      </div>
       <div class="section-title">
         <span>近 14 天串飞规律（全量观测积累）</span>
       </div>
@@ -355,6 +363,7 @@
     let schedTimeType = '计划';
     let schedLeg = '落地';
     let schedSortAsc = true;
+    let predHghFilter = '仅HGH';
     let mapOpen = false;
     let leafletMap = null;
     let aircraftLayer = null;
@@ -542,8 +551,21 @@
       renderRadar(cachedRadar);
     }
 
+    function setPredHghFilter(val, el) {
+      predHghFilter = val;
+      el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      if (cachedPreds) renderPredictions(cachedPreds);
+    }
+
     function renderPredictions(rows) {
-      const filtered = rows.filter(matchDualFilter);
+      const filtered = rows.filter(r => {
+        if (!matchDualFilter(r)) return false;
+        const isHgh = Boolean(r.is_hgh);
+        if (predHghFilter === '仅HGH' && !isHgh) return false;
+        if (predHghFilter === '非HGH' && isHgh) return false;
+        return true;
+      });
       document.getElementById('predList').innerHTML = filtered.length
         ? filtered.map(r => `
           <div class="card ${r.is_special_livery ? 'watched' : ''}">
