@@ -2,6 +2,36 @@
 
 面向个人拍机场景的轻量级雷达与数据记录工具，针对**杭州萧山国际机场（HGH / ZSHC）**定制，同时支持**彩绘客机**与**货机**。
 
+---
+
+## ⚡ 常用控制：怎么开 / 怎么关（macOS 原生后台）
+
+### 1. 开启后台常驻（关掉终端也一直跑，开机自启）
+```bash
+cd ~/Desktop/hgh-plane-spotter
+./scripts/install_launchd.sh
+```
+- 本机浏览器访问：`http://127.0.0.1:8787`
+- 手机 Tailscale 访问：`http://<Mac的Tailscale虚拟IP>:8787`
+
+### 2. 彻底关闭服务（立即停止 + 取消开机自启）
+```bash
+cd ~/Desktop/hgh-plane-spotter
+./scripts/uninstall_launchd.sh
+```
+> 不会删除代码和历史数据库 `hgh_spotter.db`，下次想开时再运行 `install_launchd.sh` 即可。
+
+### 3. 查看运行状态与日志
+```bash
+# 查看是否在后台运行（有输出表示运行中，无输出表示已关闭）
+launchctl list | grep planespotter
+
+# 查看实时运行日志
+tail -f ~/Desktop/hgh-plane-spotter/logs/stderr.log
+```
+
+---
+
 ## 核心功能
 
 - **HGH 周边实时雷达**：每 30 秒拉取 `adsb.lol` 开源数据，关注清单中的彩绘机与货机自动高亮置顶，展示距离、高度、升降趋势、航线与估算 ETA。
@@ -11,19 +41,8 @@
 
 ## 本地运行（macOS + Tailscale 方案）
 
-### 1. 启动与关闭（macOS 后台自启 `launchd` 方案，最省资源）
-安装并开启后台常驻（关掉终端也能一直运行，开机自动启动）：
-```bash
-cd ~/Desktop/hgh-plane-spotter
-./scripts/install_launchd.sh
-```
-彻底停止并关闭后台服务（同时取消开机自启）：
-```bash
-cd ~/Desktop/hgh-plane-spotter
-./scripts/uninstall_launchd.sh
-```
-如果只是临时在前台调试运行，也可以直接执行 `./start.sh`。
-启动后本机浏览器访问：`http://127.0.0.1:8787`（如需自定义端口可先执行 `export PORT=你的端口`）
+### 1. 临时前台调试运行（可选）
+如果不想装成后台服务，只是临时调试看效果，可以直接执行 `./start.sh`（关闭终端窗口即停止）。如需自定义端口可先执行 `export PORT=你的端口`。
 
 ### 2. 出门只带手机如何访问？（Tailscale）
 1. 在家里的 Mac 和随身手机上分别安装 **Tailscale** 并登录同一个账号。
